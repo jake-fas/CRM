@@ -1,3 +1,7 @@
+# Current provider note
+
+Apify is now the default discovery source at the user's request. This document describes the separate openly licensed Overture backup and catalog-only mode. Apify rows never enter the licensed Catalog table; see [Apify setup](apify-setup.md).
+
 # Permanent prospect data
 
 Use **Overture Places** as the retained catalog. Google supplies only the temporary starting-address geocode for this mode. Apify's Google Maps scraper is not used as a data-license workaround. This choice allows reuse of names, addresses, public branch phones and coordinates under the applicable open licenses, while keeping the app in Apps Script/Sheets.

@@ -8,7 +8,7 @@ Target repository: https://github.com/jake-fas/CRM. Source code belongs here; cu
 2. Enable the Apps Script API at https://script.google.com/home/usersettings.
 3. In a local clone, run `npm ci` and `npm run clasp -- login`. Complete Google's browser sign-in yourself. OAuth credentials are saved outside the repository in `.clasprc.json`; never paste them into chat or source code.
 4. Copy `.clasp.example.json` to `.clasp.json` and replace `scriptId` with your bound Script ID. Keep `rootDir` as `.`. The config is ignored by Git.
-5. Run `npm run clasp -- show-file-status`. It must list exactly `appsscript.json`, `Core.gs`, `Provider.gs`, `Catalog.gs`, `Code.gs`, `Index.html`. The separate policy project must not be uploaded.
+5. Run `npm run clasp -- show-file-status`. It must list exactly seven files: `appsscript.json`, `Core.gs`, `Provider.gs`, `Catalog.gs`, `Apify.gs`, `Code.gs`, `Index.html`. The separate policy project must not be uploaded.
 6. Run `npm test`, then `npm run clasp -- push`. This replaces the script's source with the tested repository code. Routine code edits happen locally thereafter.
 7. In the Google editor, configure Script Properties and run `setup_` once. Deploy the web app as **the accessing user**, allowing signed-in accounts; the server's `ALLOWED_EMAILS` list still restricts access. Test an allowed account and a denied account. Existing Google Workspace rules may restrict authorizations.
 8. Copy the **deployment ID** from Deploy → Manage deployments. She opens its `/exec` URL on desktop/iPhone. Updating this deployment preserves that URL.
@@ -29,7 +29,7 @@ The OAuth refresh credential grants deployment access to Google Apps Script proj
 
 Add repository **variable** `APPS_SCRIPT_DEPLOY_ENABLED` with value `true`. Until then, deployment is skipped while tests still run. The deployment workflow also supports a manual run from Actions. It only deploys `main`, never a pull-request branch. Fork PR tests receive no Google credentials.
 
-Every push/PR runs Node tests. A push to `main`, once enabled, reruns tests, stages only the six app files, uploads them with pinned clasp 3.4.1 and updates the existing deployment with a new immutable version. Deployments run sequentially. Temporary credential files are cleaned up. The main branch is the source of truth; editor changes will be replaced by the next deployment.
+Every push/PR runs Node tests. A push to `main`, once enabled, reruns tests, stages only the seven app files, uploads them with pinned clasp 3.4.1 and updates the existing deployment with a new immutable version. Deployments run sequentially. Temporary credential files are cleaned up. The main branch is the source of truth; editor changes will be replaced by the next deployment.
 
 ## What is still pending
 

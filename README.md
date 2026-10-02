@@ -1,8 +1,8 @@
 # Fieldbook CRM
 
-Apps Script + Google Sheets is the selected architecture, developed locally and versioned in GitHub. **Overture Places is the retained-data provider**; Google Places is an optional temporary preview. The default discovery mode searches an imported licensed territory catalog. Public names, addresses and available branch phones can be saved from that catalog. Manager contacts come from the rep's own work. This package includes CRM, ordered industries, exclusions, follow-ups and a fictional demo; no native app or reminder notifications.
+Apps Script + Google Sheets is the selected architecture, developed locally and versioned in GitHub. **Apify is the default discovery provider**, with a separately licensed **Overture Places catalog as backup**. Minimal Apify business facts are retained at the user's request and labeled rights-unverified; using a scraper does not establish underlying storage permission. Google Places API remains an optional temporary preview. Manager contacts come from the rep's own work. CRM, ordered industries, exclusions and follow-ups work on desktop and phone; no native app or background reminder notifications.
 
-Start with [GitHub deployment setup](docs/github-deployment.md), [retained catalog setup](docs/retained-catalog.md), and [provider research and Boulder measurements](docs/long-term-data-research.md). These supersede the original Google-only provider decision in `docs/decision-and-spec.md`.
+Start with [complete Apify/Google setup](docs/apify-setup.md), [GitHub deployment setup](docs/github-deployment.md), and [free Overture catalog setup](docs/retained-catalog.md). The new Apify setup supersedes earlier provider recommendations; [research and Boulder measurements](docs/long-term-data-research.md) remain background evidence.
 
 ## What the rep can do
 
@@ -14,7 +14,7 @@ Start with [GitHub deployment setup](docs/github-deployment.md), [retained catal
 - Log calls, OSVs, card drops, appointments, decision-maker meetings, not-interested outcomes, and notes with dates.
 - See due/overdue follow-ups. Archive and restore businesses without losing history.
 
-Industry order is a fill priority: the first included industry may supply all 50 candidates. **Retained catalog:** local selection uses industry priority then distance, a hard radius and zero Places requests. **Google preview:** later industries are searched only when earlier ones leave the raw limit unfilled, with at most six search requests; its radius is a bias. Neither mode acquires replacements after exclusions, or guarantees an exhaustive globally nearest list. ZIP filters can reduce results.
+Industry order is a fill priority: the first included industry may supply all 50 candidates. **Apify:** one industry per async run, requesting only remaining raw candidates, with a $0.75 batch ceiling and local Overture phone/failure backup. Recent source rows can avoid new scraping. **Retained catalog:** local selection uses industry priority then distance, a hard radius and zero Places requests. **Google preview:** later industries are searched only when earlier ones leave the raw limit unfilled, with at most six search requests; its radius is a bias. Neither mode acquires replacements after exclusions, or guarantees an exhaustive globally nearest list. ZIP filters can reduce results.
 
 ## Account-free local demo
 
@@ -28,13 +28,13 @@ Open http://127.0.0.1:4173. Everything is fictional and visibly labeled. Demo ca
 
 ## Install in Google Sheets
 
-Use your private native CRM Sheet. The original pilot created a Sheet with Start here, CRM, Activities and Exclusions tabs, frozen headers and America/Denver timezone. Its Apps Script project still needs installation below; setup adds the Catalog tab. Sheet IDs and credentials are configured outside GitHub. Installation does not require an Apps Script paid plan.
+Use your private native CRM Sheet. The original pilot created a Sheet with Start here, CRM, Activities and Exclusions tabs, frozen headers and America/Denver timezone. Its Apps Script project still needs installation below; setup adds Catalog and ApifyBusinesses tabs. Sheet IDs and credentials are configured outside GitHub. Installation does not require an Apps Script paid plan.
 
 1. Open the Sheet, then **Extensions → Apps Script**.
-2. Preferred: follow the clasp setup linked above to upload the local code. Manual alternative: add Script files `Core`, `Provider`, `Catalog`, and `Code`, and HTML file `Index`. Do not upload tests, demo tools, or the separate public-policy script to this project.
+2. Preferred: follow the clasp setup linked above to upload the local code. Manual alternative: add Script files `Core`, `Provider`, `Catalog`, `Apify`, and `Code`, and HTML file `Index`. Do not upload tests, demo tools, or the separate public-policy script to this project.
 3. In Project Settings, enable viewing `appsscript.json`, then replace it with the supplied manifest.
 4. Add Script Property `ALLOWED_EMAILS` containing your own Google email initially. Later add the rep's email separated by a comma. These accounts must also be permitted Sheet editors because the web app executes as the accessing user. Treat bound script editors as trusted administrators: they can inspect code/properties, including the API key.
-5. Run `setup_` from the editor and authorize the requested permissions. It records the bound Sheet ID and creates/checks CRM, Activities, Exclusions and Catalog tabs. Do not rename headers. Literal text prevents formula execution and date round-trip differences.
+5. Run `setup_` from the editor and authorize the requested permissions. It records the bound Sheet ID and creates/checks CRM, Activities, Exclusions, Catalog and ApifyBusinesses tabs. Do not rename headers. Literal text prevents formula execution and date round-trip differences.
 6. Deploy → New deployment → Web app. **Execute as: user accessing the web app.** For the owner-only first test, restrict access to yourself if that combination is offered. For additional testers choose signed-in Google accounts or your Workspace domain as offered; the server still checks `ALLOWED_EMAILS`. Never allow anonymous access or deploy the CRM as the owner for external users. Account UI options vary; verify deployment identity and denial of unlisted accounts.
 7. Open the `/exec` URL and grant the requested scopes. The CRM works before discovery is configured. If Google reports an unverified app or employer restrictions, resolve the account/OAuth configuration rather than relaxing app access checks.
 
@@ -54,6 +54,8 @@ Search requests use explicit Enterprise fields including phone, website, hours, 
 Source: https://developers.google.com/maps/billing-and-pricing/pricing
 
 ## Storage and exclusions
+
+Apify output is stored separately in ApifyBusinesses: name, address, public phone and minimal ranking/provenance metadata. The app never labels those Google-sourced fields as openly licensed. Its 30-day freshness threshold controls reuse; it does not delete old rows. Source refreshes preserve independent CRM records. See the setup guide for exact retention, recovery and cost behavior.
 
 Live Google result names, addresses, phones, hours, websites and responses are not persisted. Google preview creates a blank CRM form linked by place ID; typing a Google field into that form is still copying restricted data. Overture catalog results can prefill business name, address and branch phone because they come from a separately licensed retained source. Source IDs use `overture:` namespaces and link to catalog provenance. Independently obtained CRM facts and activities are retained. Retention rights do not certify data accuracy.
 

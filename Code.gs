@@ -2,7 +2,8 @@ var TABLES_ = {
  CRM:['id','place_id','business_name','address','phone','contact_name','contact_role','competitor','status','next_plan','follow_up','created_at','updated_at','request_id'],
  Activities:['id','lead_id','type','date','notes','created_at','request_id'],
  Exclusions:['place_id','name','address','reason'],
- Catalog:['id','name','address','phone','website','latitude','longitude','industry','zip','source','release','source_dataset','license','retrieved_at','confidence','operating_status']
+ Catalog:['id','name','address','phone','website','latitude','longitude','industry','zip','source','release','source_dataset','license','retrieved_at','confidence','operating_status'],
+ ApifyBusinesses:['id','name','address','phone','latitude','longitude','industry','zip','source','license','retrieved_at','phone_source','phone_observed_at','operating_status']
 };
 function authorize_(){
  var props=PropertiesService.getScriptProperties();
@@ -64,7 +65,8 @@ function preferences_(){
 }
 function getBootstrap(){
  var props=authorize_();
- return {industries:preferences_(),statuses:CRM_STATUSES,activityTypes:ACTIVITY_TYPES,today:today_(),configured:!!props.getProperty('GOOGLE_MAPS_API_KEY')&&policiesConfigured_(props),privacyUrl:props.getProperty('PRIVACY_URL')||'',termsUrl:props.getProperty('TERMS_URL')||'',exclusionCount:locked_(function(){return records_('Exclusions').length;}),catalogCount:locked_(function(){return records_('Catalog').length;}),demo:false};
+ var active=props.getProperty('APIFY_SEARCH');active=active?JSON.parse(active):null;
+ return {industries:preferences_(),statuses:CRM_STATUSES,activityTypes:ACTIVITY_TYPES,today:today_(),configured:!!props.getProperty('GOOGLE_MAPS_API_KEY')&&policiesConfigured_(props),apifyConfigured:!!props.getProperty('APIFY_TOKEN'),pendingApifyJob:active&&['running','advance'].indexOf(active.stage)>=0?active.id:'',privacyUrl:props.getProperty('PRIVACY_URL')||'',termsUrl:props.getProperty('TERMS_URL')||'',exclusionCount:locked_(function(){return records_('Exclusions').length;}),catalogCount:locked_(function(){return records_('Catalog').length;}),demo:false};
 }
 function policiesConfigured_(props){return /^https:\/\//.test(props.getProperty('PRIVACY_URL')||'')&&/^https:\/\//.test(props.getProperty('TERMS_URL')||'');}
 function saveIndustryPreferences(order){

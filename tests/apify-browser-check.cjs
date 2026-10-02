@@ -1,0 +1,10 @@
+const {chromium}=require('playwright'),assert=require('node:assert/strict');
+(async()=>{const browser=await chromium.launch({channel:'msedge',headless:true});try{for(const viewport of [{width:1365,height:900},{width:390,height:844}]){
+ const page=await browser.newPage({viewport}),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(process.env.DEMO_URL||'http://127.0.0.1:4174');await page.getByText('Demo ready.',{exact:false}).waitFor();assert.equal(await page.locator('#provider').inputValue(),'apify');
+ // Different industry/count ensures both viewports exercise a fresh async actor, not only cache.
+ if(viewport.width===390){await page.locator('#industryList input').first().uncheck();}
+ await page.locator('#address').fill('Fictional starting address');await page.locator('#count').fill('2');await page.getByRole('button',{name:'Find nearby businesses',exact:true}).click();await page.getByText('Apify is collecting',{exact:false}).waitFor();
+ await page.reload();await page.getByRole('button',{name:'Resume Apify search',exact:true}).waitFor();await page.locator('#results .card').first().waitFor({timeout:25000});assert.match(await page.locator('#sourceAttribution').innerText(),/Apify/);
+ await page.locator('#results .card button').first().click();assert.match(await page.locator('#businessName').inputValue(),/Fictional/);assert.equal(await page.locator('#contactPhone').inputValue(),'+13035550100');assert.equal(await page.locator('#contactName').inputValue(),'');await page.getByRole('button',{name:'Save business',exact:true}).click();await page.getByText('Business saved.',{exact:true}).waitFor();await page.getByRole('button',{name:'Close business editor'}).click();
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));assert.deepEqual(errors,[]);console.log(viewport.width+'px: Apify async search, reload/resume, phone prefill/save, no invented manager, no overflow PASS');await page.close();
+ }}finally{await browser.close();}})().catch(e=>{console.error(e);process.exit(1);});

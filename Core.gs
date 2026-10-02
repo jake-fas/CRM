@@ -57,7 +57,7 @@ function parseExclusions(csv) {
 function normalized(value){return String(value||'').toLowerCase().replace(/[^a-z0-9]/g,'');}
 function exclusionKey(x){return x.place_id?'id:'+x.place_id:'address:'+normalized(x.name)+'|'+normalized(x.address);}
 function matchesExclusion(place,x){
-  if(x.place_id)return x.place_id===place.id;
+  if(x.place_id&&(x.place_id===place.id||String(x.place_id).replace(/^apify:/,'')===String(place.id).replace(/^apify:/,'')))return true;
   return !!x.name&&!!x.address&&normalized(x.name)===normalized(place.displayName&&place.displayName.text)&&normalized(x.address)===normalized(place.formattedAddress);
 }
 function filterCandidates(places,exclusions,zips){

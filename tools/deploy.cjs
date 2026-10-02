@@ -1,6 +1,6 @@
 // CI only: credentials come from GitHub Secrets, never checked-in files.
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),{spawnSync}=require('node:child_process');
-const sourceFiles=['appsscript.json','Core.gs','Provider.gs','Catalog.gs','Code.gs','Index.html'];
+const sourceFiles=['appsscript.json','Core.gs','Provider.gs','Catalog.gs','Apify.gs','Code.gs','Index.html'];
 function stageDeployment(root,credentials,scriptId){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fieldbook-deploy-'));
  const stage={dir,auth:path.join(dir,'auth.json'),config:path.join(dir,'project.json')};

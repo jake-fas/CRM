@@ -70,8 +70,62 @@ function services(email='rep@example.com') {
  const propertyStore={getProperty:k=>props[k]||null,setProperty:(k,v)=>{props[k]=String(v);},getProperties:()=>({...props})};
  const extra={PropertiesService:{getScriptProperties:()=>propertyStore},Session:{getActiveUser:()=>({getEmail:()=>email})},SpreadsheetApp:{openById:()=>spreadsheet,flush:()=>{flushedUnderLock=locked;}},Utilities:{getUuid:()=>require('node:crypto').randomUUID(),formatDate:()=> '2026-10-02'},LockService:{getScriptLock:()=>({tryLock:()=>{if(locked)return false;locked=true;return true;},releaseLock:()=>{locked=false;}})},UrlFetchApp:{fetch:url=>{fetchCount++;return {getResponseCode:()=>200,getContentText:()=>url.includes('geocode')?JSON.stringify({status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]}):JSON.stringify({places:[place(1)]})};}}};
  const c=load(['Core.gs','Provider.gs','Catalog.gs','Code.gs'],extra);
+ if(fs.existsSync(path.join(root,'Apify.gs')))vm.runInContext(fs.readFileSync(path.join(root,'Apify.gs'),'utf8'),c);
+ const cache={};c.CacheService={getScriptCache:()=>({get:k=>cache[k]||null,put:(k,v)=>cache[k]=v,remove:k=>delete cache[k]})};
  return {c,sheets,props,get locked(){return locked;},get fetchCount(){return fetchCount;},get flushedUnderLock(){return flushedUnderLock;}};
 }
+function apifyTransport(s,batches){
+ s.props.APIFY_TOKEN='private-token';s.props.DAILY_APIFY_RUN_LIMIT='20';let starts=0,reads=0;const requests=[];
+ s.c.UrlFetchApp.fetch=(url,options={})=>{requests.push({url,options});let data;
+ if(url.includes('geocode'))data={status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]};
+ else if(url.includes('/actors/')){starts++;data={data:{id:'run'+starts}};}
+ else if(url.includes('/actor-runs/'))data={data:{id:'run'+starts,status:'SUCCEEDED',defaultDatasetId:'dataset'+starts}};
+ else{reads++;data=batches[starts-1]||[];}
+ return {getResponseCode:()=>200,getContentText:()=>JSON.stringify(data)};};
+ return {requests,get starts(){return starts;},get reads(){return reads;}};
+}
+function apifyItem(n){return {placeId:'ChIJfixture'+n,title:'Fixture '+n,address:n+' Example St, Boulder, CO 80301',postalCode:'80301',countryCode:'US',phoneUnformatted:'+13035550100',location:{lat:40,lng:-105}};}
+test('ambiguous Apify start failure shows fallback and blocks a second paid start until operator recovery',()=>{
+ const s=services();s.props.APIFY_TOKEN='private-token';let starts=0;const original=s.c.UrlFetchApp.fetch;s.c.UrlFetchApp.fetch=(url,o)=>{if(url.includes('/actors/')){starts++;throw new Error('private-token');}return original(url,o);};
+ const out=s.c.startApifySearch(input({count:1}));assert.equal(out.startUncertain,true);assert.ok(!out.fallbackReason.includes('private-token'));assert.equal(starts,1);assert.throws(()=>s.c.startApifySearch(input({count:1})),/unknown outcome/i);assert.equal(starts,1);
+});
+test('failed actor retains its usable paid partial dataset and stops instead of starting another industry',()=>{
+ const s=services(),t=apifyTransport(s,[[apifyItem(1)]]),pending=s.c.startApifySearch(input({count:3,industries:['restaurant','car_repair']})),original=s.c.UrlFetchApp.fetch;
+ s.c.UrlFetchApp.fetch=(url,o)=>url.includes('/actor-runs/')?{getResponseCode:()=>200,getContentText:()=>JSON.stringify({data:{status:'FAILED',defaultDatasetId:'dataset1'}})}:original(url,o);
+ const out=s.c.pollApifySearch(pending.jobId);assert.equal(out.eligible.length,1);assert.equal(out.provider,'apify');assert.equal(s.c.records_('ApifyBusinesses').length,1);assert.equal(t.starts,1);assert.match(out.fallbackReason,/FAILED/);
+});
+test('cached Apify search checks the latest local Overture backup for a missing phone without another scrape',()=>{
+ const s=services(),t=apifyTransport(s,[[{...apifyItem(1),phoneUnformatted:''}]]),pending=s.c.startApifySearch(input({count:1}));assert.equal(s.c.pollApifySearch(pending.jobId).eligible[0].nationalPhoneNumber,'');
+ const p={id:'overture:phone-backup',name:'Fixture 1',address:'1 Example St, Boulder, CO 80301',phone:'+13035550199',website:'',latitude:40,longitude:-105,industry:'restaurant',zip:'80301',source:'overture',release:'2026-09-23.1',source_dataset:'meta',license:'CDLA-Permissive-2.0',confidence:.9,operating_status:'open'};
+ s.c.importCatalog(JSON.stringify({schema:'fieldbook-overture-v1',release:p.release,places:[p]}));s.props.DAILY_APIFY_RUN_LIMIT='0';const cached=s.c.startApifySearch(input({count:1}));assert.equal(cached.cacheHit,true);assert.equal(cached.eligible[0].nationalPhoneNumber,p.phone);assert.equal(cached.eligible[0].phoneSource,p.id);assert.equal(t.starts,1);
+});
+test('resuming an ingested-run checkpoint starts the next industry without reading the previous dataset again',()=>{
+ const s=services(),t=apifyTransport(s,[[apifyItem(1)],[apifyItem(2)]]),pending=s.c.startApifySearch(input({count:3,industries:['car_repair','restaurant']}));
+ const state=JSON.parse(s.props.APIFY_SEARCH);s.c.writeRecords_('ApifyBusinesses',[s.c.normalizeApifyPlace_(apifyItem(1),'car_repair',[])]);state.index=1;state.rawCount=1;state.ids=['apify:ChIJfixture1'];state.stage='advance';s.props.APIFY_SEARCH=JSON.stringify(state);
+ const out=s.c.pollApifySearch(pending.jobId);assert.equal(out.pending,true);assert.equal(t.starts,2);assert.equal(t.reads,0);assert.equal(JSON.parse(s.props.APIFY_SEARCH).rawCount,1);
+});
+test('Apify is asynchronous, preserves excluded candidates, reuses stored results and repeated polls do not restart runs',()=>{
+ const s=services(),t=apifyTransport(s,[[apifyItem(1),apifyItem(2)]]);s.c.importExclusions('place_id,name,address\nChIJfixture1,,');
+ const pending=s.c.startApifySearch(input({count:2}));assert.equal(pending.pending,true);assert.equal(t.starts,1);
+ assert.equal(s.c.startApifySearch(input({count:2})).jobId,pending.jobId);assert.equal(t.starts,1);
+ const out=s.c.pollApifySearch(pending.jobId);assert.equal(out.eligible.length,1);assert.equal(out.excluded,1);assert.equal(s.c.records_('ApifyBusinesses').length,2);
+ s.c.pollApifySearch(pending.jobId);assert.equal(t.starts,1);assert.equal(t.reads,1);
+ const reused=s.c.startApifySearch(input({count:2}));assert.equal(reused.cacheHit,true);assert.equal(t.starts,1);
+ const p=s.c.records_('ApifyBusinesses')[0];assert.equal(p.license,'rights-unverified');assert.equal(p.phone_source,'apify');
+});
+test('sparse Apify industries request remaining raw count, divide the batch budget and never top up exclusions',()=>{
+ const s=services(),t=apifyTransport(s,[[apifyItem(1)],[apifyItem(2),apifyItem(3)]]);
+ const pending=s.c.startApifySearch(input({count:3,industries:['car_repair','restaurant']}));const mid=s.c.pollApifySearch(pending.jobId);assert.equal(mid.pending,true);assert.equal(t.starts,2);
+ const out=s.c.pollApifySearch(pending.jobId);assert.equal(out.rawCount,3);assert.equal(out.searchRequests,2);assert.equal(out.costCeilingUsd,.755);
+ const starts=t.requests.filter(x=>x.url.includes('/actors/'));assert.deepEqual(starts.map(x=>JSON.parse(x.options.payload).maxCrawledPlacesPerSearch),[3,2]);assert.ok(starts.every(x=>x.url.includes('maxTotalChargeUsd=0.375')));
+});
+test('Apify failure returns local licensed fallback with no paid retry; zero daily quota and unauthorized calls make no requests',()=>{
+ const s=services(),t=apifyTransport(s,[]);const p={id:'overture:fallback',name:'Licensed fixture',address:'1 Example St, Boulder, CO 80301',phone:'+13035550100',website:'',latitude:40,longitude:-105,industry:'restaurant',zip:'80301',source:'overture',release:'2026-09-23.1',source_dataset:'meta',license:'CDLA-Permissive-2.0',confidence:.9,operating_status:'open'};
+ s.c.importCatalog(JSON.stringify({schema:'fieldbook-overture-v1',release:p.release,places:[p]}));const pending=s.c.startApifySearch(input({count:1}));const original=s.c.UrlFetchApp.fetch;s.c.UrlFetchApp.fetch=(url,o)=>url.includes('/actor-runs/')?{getResponseCode:()=>200,getContentText:()=>JSON.stringify({data:{status:'FAILED'}})}:original(url,o);
+ const out=s.c.pollApifySearch(pending.jobId);assert.equal(out.provider,'overture');assert.ok(out.fallbackReason);assert.equal(t.starts,1);
+ const z=services();z.props.APIFY_TOKEN='token';z.props.DAILY_APIFY_RUN_LIMIT='0';assert.throws(()=>z.c.startApifySearch(input()),/daily/i);assert.equal(z.fetchCount,0);
+ const a=services('intruder@example.com');assert.throws(()=>a.c.startApifySearch(input()),/denied/i);assert.throws(()=>a.c.pollApifySearch('x'),/denied/i);assert.equal(a.fetchCount,0);
+});
 test('unauthorized service access makes no network requests or writes',()=>{
  const s=services('intruder@example.com');assert.throws(()=>s.c.generateLeads(input()));assert.throws(()=>s.c.getCRM());assert.throws(()=>s.c.saveLead({business_name:'X'}));assert.equal(s.fetchCount,0);assert.equal(Object.keys(s.sheets).length,0);
 });
