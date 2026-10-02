@@ -45,7 +45,11 @@ Apps Script → **Project Settings → Script Properties → Add script property
 
 Publish the supplied `public-policy` as a **separate standalone static Apps Script project**, set its `POLICY_CONTACT`, and deploy to anyone. Its `/exec` URL is privacy; `/exec?page=terms` is terms. Test both while signed out. Alternatively publish these policies on your existing website. Never upload that project into the CRM script.
 
-Run `setup_` from the CRM editor and authorize access. It creates/checks `CRM`, `Activities`, `Exclusions`, `Catalog` and `ApifyBusinesses` tabs, and records the Sheet ID. Do not rename table headers. Keys stay in Script Properties, never Sheet cells or GitHub.
+Run `setupCRM` from the CRM editor and authorize access. It creates/checks `CRM`, `Activities`, `Exclusions`, `Catalog` and `ApifyBusinesses` tabs, and records the Sheet ID. Do not rename table headers. Keys stay in Script Properties, never Sheet cells or GitHub.
+
+You can run setup before obtaining any keys. `initializeProperties_`, called by `setupCRM`, adds missing configuration names with empty `APIFY_TOKEN`, `GOOGLE_MAPS_API_KEY`, `PRIVACY_URL` and `TERMS_URL` values. It seeds the current signed-in email only if `ALLOWED_EMAILS` is absent, and uses pilot quotas of one Apify run, three geocodes and zero Google Places requests. Existing values, including deliberately empty settings, are preserved. It does not create credentials or make provider calls. Complete the blank values later in Project Settings → Script Properties; discovery stays disabled until configured.
+
+Google's property editor requires a value when adding names manually. Use `NOT_CONFIGURED` for the four blank fields above; the code treats credential placeholders as missing, and setup converts those four placeholders to empty strings. Configure `ALLOWED_EMAILS` before selecting the public `setupCRM` entry point: it checks the allowlist before any writes. The underscore helpers are hidden in the editor's function selector.
 
 ## 4. Deploy and test on both devices
 

@@ -67,7 +67,7 @@ test('industry inclusion and priority fill raw cap without topping up after excl
 function services(email='rep@example.com') {
  const sheets={},props={ALLOWED_EMAILS:'rep@example.com',SPREADSHEET_ID:'sheet',GOOGLE_MAPS_API_KEY:'secret',PRIVACY_URL:'https://example.com/privacy',TERMS_URL:'https://example.com/terms'};let locked=false,fetchCount=0,flushedUnderLock=false;
  const spreadsheet={getSheetByName:n=>sheets[n]||null,insertSheet:n=>sheets[n]={rows:[],maxRows:1000,maxColumns:26,getMaxRows(){return this.maxRows;},getMaxColumns(){return this.maxColumns;},insertRowsAfter(after,count){this.maxRows+=count;},insertColumnsAfter(after,count){this.maxColumns+=count;},getLastRow(){return this.rows.length;},getDataRange(){return {getValues:()=>this.rows.map(r=>r.slice())};},getRange(r,col,nr,nc){const s=this;if(r+nr-1>s.maxRows||col+nc-1>s.maxColumns)throw new Error('Range exceeds grid limits');return {setNumberFormat(){return this;},setValues(values){values.forEach((v,i)=>{s.rows[r-1+i]=v.map(x=>typeof x==='string'&&x[0]==="'"?x.slice(1):x);});return this;},clearContent(){for(let i=r-1;i<r-1+nr;i++)s.rows[i]=Array(nc).fill('');return this;}};},setFrozenRows(){}}};
- const propertyStore={getProperty:k=>props[k]||null,setProperty:(k,v)=>{props[k]=String(v);},getProperties:()=>({...props})};
+ const propertyStore={getProperty:k=>props[k]??null,setProperty:(k,v)=>{props[k]=String(v);},getProperties:()=>({...props})};
  const extra={PropertiesService:{getScriptProperties:()=>propertyStore},Session:{getActiveUser:()=>({getEmail:()=>email})},SpreadsheetApp:{openById:()=>spreadsheet,flush:()=>{flushedUnderLock=locked;}},Utilities:{getUuid:()=>require('node:crypto').randomUUID(),formatDate:()=> '2026-10-02'},LockService:{getScriptLock:()=>({tryLock:()=>{if(locked)return false;locked=true;return true;},releaseLock:()=>{locked=false;}})},UrlFetchApp:{fetch:url=>{fetchCount++;return {getResponseCode:()=>200,getContentText:()=>url.includes('geocode')?JSON.stringify({status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]}):JSON.stringify({places:[place(1)]})};}}};
  const c=load(['Core.gs','Provider.gs','Catalog.gs','Code.gs'],extra);
  if(fs.existsSync(path.join(root,'Apify.gs')))vm.runInContext(fs.readFileSync(path.join(root,'Apify.gs'),'utf8'),c);
@@ -128,6 +128,25 @@ test('Apify failure returns local licensed fallback with no paid retry; zero dai
 });
 test('unauthorized service access makes no network requests or writes',()=>{
  const s=services('intruder@example.com');assert.throws(()=>s.c.generateLeads(input()));assert.throws(()=>s.c.getCRM());assert.throws(()=>s.c.saveLead({business_name:'X'}));assert.equal(s.fetchCount,0);assert.equal(Object.keys(s.sheets).length,0);
+});
+test('editor setup entry point rejects unauthorized callers before creating properties or tables',()=>{
+ const s=services('intruder@example.com');s.c.SpreadsheetApp.getActiveSpreadsheet=()=>({getId:()=> 'sheet'});const before=JSON.stringify(s.props);assert.throws(()=>s.c.setupCRM(),/denied/i);assert.equal(JSON.stringify(s.props),before);assert.equal(Object.keys(s.sheets).length,0);
+ const a=services();a.c.SpreadsheetApp.getActiveSpreadsheet=()=>({getId:()=> 'sheet'});a.c.setupCRM();assert.equal(Object.keys(a.sheets).length,5);assert.equal(a.fetchCount,0);
+});
+test('editor property initialization adds blank credential names and safe pilot defaults without replacing existing settings',()=>{
+ const s=services();s.c.SpreadsheetApp.getActiveSpreadsheet=()=>({getId:()=> 'sheet'});delete s.props.ALLOWED_EMAILS;delete s.props.GOOGLE_MAPS_API_KEY;
+ s.c.initializeProperties_();assert.equal(s.props.ALLOWED_EMAILS,'rep@example.com');assert.equal(s.props.APIFY_TOKEN,'');assert.equal(s.props.GOOGLE_MAPS_API_KEY,'');assert.equal(s.props.DAILY_APIFY_RUN_LIMIT,'1');assert.equal(s.props.DAILY_SEARCH_LIMIT,'0');assert.equal(s.props.DAILY_GEOCODE_LIMIT,'3');
+ s.props.APIFY_TOKEN='existing-private-token';s.props.DAILY_APIFY_RUN_LIMIT='4';s.props.ALLOWED_EMAILS='';s.c.initializeProperties_();assert.equal(s.props.APIFY_TOKEN,'existing-private-token');assert.equal(s.props.DAILY_APIFY_RUN_LIMIT,'4');assert.equal(s.props.ALLOWED_EMAILS,'');
+ assert.ok(!JSON.stringify(s.c.initializeProperties_()).includes('existing-private-token'));assert.equal(s.fetchCount,0);
+});
+test('property initialization requires a signed-in bound Sheet context before writing anything',()=>{
+ const s=services();s.c.SpreadsheetApp.getActiveSpreadsheet=()=>null;const before=JSON.stringify(s.props);assert.throws(()=>s.c.initializeProperties_(),/Sheet/i);assert.equal(JSON.stringify(s.props),before);
+ const a=services('');a.c.SpreadsheetApp.getActiveSpreadsheet=()=>({getId:()=> 'sheet'});const other=JSON.stringify(a.props);assert.throws(()=>a.c.initializeProperties_(),/sign/i);assert.equal(JSON.stringify(a.props),other);
+});
+test('UI credential placeholders are never considered configured and are cleared by editor initialization',()=>{
+ const s=services();s.props.APIFY_TOKEN='NOT_CONFIGURED';s.props.GOOGLE_MAPS_API_KEY='NOT_CONFIGURED';assert.equal(s.c.getBootstrap().configured,false);assert.equal(s.c.getBootstrap().apifyConfigured,false);
+ assert.throws(()=>s.c.startApifySearch(input()),/APIFY_TOKEN/);assert.throws(()=>s.c.generateLeads(input()),/key/i);assert.equal(s.fetchCount,0);
+ s.c.SpreadsheetApp.getActiveSpreadsheet=()=>({getId:()=> 'sheet'});s.c.initializeProperties_();assert.equal(s.props.APIFY_TOKEN,'');assert.equal(s.props.GOOGLE_MAPS_API_KEY,'');
 });
 test('CRM saves only rep-entered fields and preserves activity history on archive/restore',()=>{
  const s=services();const lead=s.c.saveLead({business_name:'My own label',place_id:'id1',status:'prospect',follow_up:'2026-10-02',displayName:{text:'Forbidden'},nationalPhoneNumber:'Forbidden'});

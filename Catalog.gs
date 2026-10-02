@@ -44,7 +44,7 @@ function importCatalog(json){
  return locked_(function(){var s=sheet_('Catalog'),oldLast=s.getLastRow();writeRecords_('Catalog',rows);if(oldLast>rows.length+1)s.getRange(rows.length+2,1,oldLast-rows.length-1,CATALOG_HEADERS.length).clearContent();return {count:rows.length,release:rows[0].release};});
 }
 function generateCatalogLeads(input){
- var props=authorize_(),settings=validateRequest(input),key=props.getProperty('GOOGLE_MAPS_API_KEY');
+ var props=authorize_(),settings=validateRequest(input),key=configuredProperty_(props,'GOOGLE_MAPS_API_KEY');
  if(!key)throw new Error('Set GOOGLE_MAPS_API_KEY for address geocoding. The retained catalog does not use Google Places.');
  if(!policiesConfigured_(props))throw new Error('Configure public privacy and terms URLs before address lookup.');
  return locked_(function(){

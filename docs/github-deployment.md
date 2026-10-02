@@ -10,7 +10,7 @@ Target repository: https://github.com/jake-fas/CRM. Source code belongs here; cu
 4. Copy `.clasp.example.json` to `.clasp.json` and replace `scriptId` with your bound Script ID. Keep `rootDir` as `.`. The config is ignored by Git.
 5. Run `npm run clasp -- show-file-status`. It must list exactly seven files: `appsscript.json`, `Core.gs`, `Provider.gs`, `Catalog.gs`, `Apify.gs`, `Code.gs`, `Index.html`. The separate policy project must not be uploaded.
 6. Run `npm test`, then `npm run clasp -- push`. This replaces the script's source with the tested repository code. Routine code edits happen locally thereafter.
-7. In the Google editor, configure Script Properties and run `setup_` once. Deploy the web app as **the accessing user**, allowing signed-in accounts; the server's `ALLOWED_EMAILS` list still restricts access. Test an allowed account and a denied account. Existing Google Workspace rules may restrict authorizations.
+7. In the Google editor, configure Script Properties and run `setupCRM` once. Deploy the web app as **the accessing user**, allowing signed-in accounts; the server's `ALLOWED_EMAILS` list still restricts access. Test an allowed account and a denied account. Existing Google Workspace rules may restrict authorizations.
 8. Copy the **deployment ID** from Deploy → Manage deployments. She opens its `/exec` URL on desktop/iPhone. Updating this deployment preserves that URL.
 
 Public privacy and terms pages are a separate static project, documented in the root README. They do not share the private CRM code or key.
@@ -33,6 +33,6 @@ Every push/PR runs Node tests. A push to `main`, once enabled, reruns tests, sta
 
 ## What is still pending
 
-The repository contains the tested pipeline; it is not yet connected to your Google account. No clasp login credentials, Script ID or deployment ID were available during setup. Therefore no live Apps Script deployment or Google request has been claimed as verified. The local demo uses fictional service doubles.
+The bound Fieldbook CRM project has been created in the private pilot Sheet through the Google editor. All seven source files and nine configuration names were saved; keys were left as disabled placeholders. The ignored local `.clasp.json` points to that project. Google authorization for `setupCRM` is still pending because the in-app browser did not open the permission popup. No web-app deployment, live provider call, clasp login credentials, or GitHub deployment secrets have been verified. The local demo uses fictional service doubles. Complete Google authorization in a normal browser, run `setupCRM`, then deploy and test the web app before enabling CI deployment.
 
 If production needs rollback, use Deploy → Manage deployments to select a previous working version. Reverting a Git commit and redeploying also produces a new version. Do not delete the existing deployment to update code.

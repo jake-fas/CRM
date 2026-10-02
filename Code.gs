@@ -47,8 +47,20 @@ function ensureGrid_(sheet,lastRow,lastColumn){
  if(lastRow>rows)sheet.insertRowsAfter(rows,lastRow-rows);
  if(lastColumn>columns)sheet.insertColumnsAfter(columns,lastColumn-columns);
 }
-// Run in the Apps Script editor after setting ALLOWED_EMAILS; never callable from the page.
+// Editor-only: create configuration names without obtaining keys or exposing existing values.
+function configuredProperty_(props,name){var value=String(props.getProperty(name)||'').trim();return value==='NOT_CONFIGURED'?'':value;}
+function initializeProperties_(){
+ var active=SpreadsheetApp.getActiveSpreadsheet();if(!active)throw new Error('Open this script from Extensions > Apps Script in your Sheet.');
+ var email=String(Session.getActiveUser().getEmail()||'').toLowerCase();if(!email)throw new Error('Sign in to Google before initializing the script.');
+ var props=PropertiesService.getScriptProperties(),defaults={ALLOWED_EMAILS:email,SPREADSHEET_ID:active.getId(),APIFY_TOKEN:'',GOOGLE_MAPS_API_KEY:'',PRIVACY_URL:'',TERMS_URL:'',DAILY_APIFY_RUN_LIMIT:'1',DAILY_GEOCODE_LIMIT:'3',DAILY_SEARCH_LIMIT:'0'};
+ Object.keys(defaults).forEach(function(name){var value=props.getProperty(name);if(value===null||value==='NOT_CONFIGURED'&&defaults[name]==='')props.setProperty(name,defaults[name]);});
+ return {properties:Object.keys(defaults),credentialsCreated:false};
+}
+// Select setupCRM in the editor. The public wrapper requires the configured allowlist;
+// the underlying underscore helpers cannot be called through google.script.run.
+function setupCRM(){authorize_();return setup_();}
 function setup_(){
+ initializeProperties_();
  authorize_();
  var active=SpreadsheetApp.getActiveSpreadsheet();if(!active)throw new Error('Open this script from Extensions > Apps Script in your Sheet.');
  PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID',active.getId());
@@ -66,7 +78,7 @@ function preferences_(){
 function getBootstrap(){
  var props=authorize_();
  var active=props.getProperty('APIFY_SEARCH');active=active?JSON.parse(active):null;
- return {industries:preferences_(),statuses:CRM_STATUSES,activityTypes:ACTIVITY_TYPES,today:today_(),configured:!!props.getProperty('GOOGLE_MAPS_API_KEY')&&policiesConfigured_(props),apifyConfigured:!!props.getProperty('APIFY_TOKEN'),pendingApifyJob:active&&['running','advance'].indexOf(active.stage)>=0?active.id:'',privacyUrl:props.getProperty('PRIVACY_URL')||'',termsUrl:props.getProperty('TERMS_URL')||'',exclusionCount:locked_(function(){return records_('Exclusions').length;}),catalogCount:locked_(function(){return records_('Catalog').length;}),demo:false};
+ return {industries:preferences_(),statuses:CRM_STATUSES,activityTypes:ACTIVITY_TYPES,today:today_(),configured:!!configuredProperty_(props,'GOOGLE_MAPS_API_KEY')&&policiesConfigured_(props),apifyConfigured:!!configuredProperty_(props,'APIFY_TOKEN'),pendingApifyJob:active&&['running','advance'].indexOf(active.stage)>=0?active.id:'',privacyUrl:props.getProperty('PRIVACY_URL')||'',termsUrl:props.getProperty('TERMS_URL')||'',exclusionCount:locked_(function(){return records_('Exclusions').length;}),catalogCount:locked_(function(){return records_('Catalog').length;}),demo:false};
 }
 function policiesConfigured_(props){return /^https:\/\//.test(props.getProperty('PRIVACY_URL')||'')&&/^https:\/\//.test(props.getProperty('TERMS_URL')||'');}
 function saveIndustryPreferences(order){
@@ -88,7 +100,7 @@ function checkRequestBudget_(kind,reserve){
 }
 function reserveRequest_(kind){checkRequestBudget_(kind,true);}
 function generateLeads(input){
- var props=authorize_(),settings=validateRequest(input),key=props.getProperty('GOOGLE_MAPS_API_KEY');
+ var props=authorize_(),settings=validateRequest(input),key=configuredProperty_(props,'GOOGLE_MAPS_API_KEY');
  if(!key)throw new Error('Google API key is not configured. The builder must finish setup.');
  if(!policiesConfigured_(props))throw new Error('Public privacy policy and terms URLs must be configured before Google lookup.');
  return locked_(function(){

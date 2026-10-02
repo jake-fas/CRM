@@ -3,8 +3,8 @@ const assert=require('node:assert/strict');
 const {spawnSync}=require('node:child_process');
 const path=require('node:path'),fs=require('node:fs');
 test('deployment refuses missing credentials before writing files or making requests',()=>{
- const root=path.join(__dirname,'..');const result=spawnSync(process.execPath,['tools/deploy.cjs'],{cwd:root,encoding:'utf8',env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot}});
- assert.equal(result.status,1);assert.match(result.stderr,/CLASPRC_JSON/);assert.ok(!fs.existsSync(path.join(root,'.clasp.json')));
+ const root=path.join(__dirname,'..'),config=path.join(root,'.clasp.json'),before=fs.existsSync(config)?fs.readFileSync(config,'utf8'):null;const result=spawnSync(process.execPath,['tools/deploy.cjs'],{cwd:root,encoding:'utf8',env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot}});
+ assert.equal(result.status,1);assert.match(result.stderr,/CLASPRC_JSON/);assert.equal(fs.existsSync(config)?fs.readFileSync(config,'utf8'):null,before);
 });
 test('deployment stages only the seven CRM source files inside the config root',()=>{
  const {stageDeployment,cleanupStage}=require('../tools/deploy.cjs');let stage;

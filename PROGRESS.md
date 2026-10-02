@@ -41,3 +41,13 @@ Storage: source IDs, name/address/public phone and minimum ranking/provenance fi
 Review: apify_review caught an interrupted transition replay window and missing address agreement in fallback. Added failing regressions, fixed with an advance checkpoint and full address/name/ZIP plus 50-meter unique matching. Reviewer verified both fixes, no remaining blocker.
 Verification: 41 unit tests passed; desktop 1365px and mobile 390px browser workflows passed for Apify async/reload/resume/prefill, licensed catalog and Google/CRM regression. clasp selects exactly seven app files including Apify.gs. Live billing, Google account authorization and actual iPhone acceptance remain pending credentials.
 Setup: docs/apify-setup.md covers token/key entry in Script Properties, private Sheet installation, Google deployment, first five-result live test, Overture import/refresh, quotas, backup, recovery and GitHub deployment secrets.
+
+# Browser installation — 2026-10-02
+
+- Created and named the bound Fieldbook CRM Apps Script project from the existing private pilot Sheet.
+- Installed and read back all seven app source files through the editor; compared normalized text to local source. Updated manifest uses Denver time, V8, user execution and no Cloud exception logging.
+- Saved nine Script Properties: access/Sheet binding, three quotas and four `NOT_CONFIGURED` placeholders. No keys or provider requests were created.
+- Added the allowlist-protected `setupCRM` entry point because Google's function selector hides underscore helpers. Placeholder credentials remain disabled; initialization preserves existing settings.
+- Linked the ignored local clasp config to the actual project; its upload list contains exactly seven files.
+- Google authorization popup did not open in the in-app browser. User must authorize and run setup in a normal browser. Sheet initialization and web-app deployment remain unverified. Account identifiers and project bindings stay out of GitHub.
+- Local validation: 45 tests pass, including unauthorized setup rejection and no-key initialization.

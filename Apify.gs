@@ -55,7 +55,7 @@ function finishApify_(state,center,reason){
  var out=apifyResult_(rows,state,center,false,reason);state.stage='complete';saveApifyState_(state);CacheService.getScriptCache().put('apify-result-'+state.id,JSON.stringify(out),3600);return out;
 }
 function startApifySearch(input){
- var props=authorize_(),settings=validateRequest(input),token=props.getProperty('APIFY_TOKEN'),key=props.getProperty('GOOGLE_MAPS_API_KEY');
+ var props=authorize_(),settings=validateRequest(input),token=configuredProperty_(props,'APIFY_TOKEN'),key=configuredProperty_(props,'GOOGLE_MAPS_API_KEY');
  if(!token)throw new Error('Set APIFY_TOKEN in Apps Script Properties.');if(!key||!policiesConfigured_(props))throw new Error('Configure the Google geocoding key and public policy URLs.');
  return locked_(function(){
   var active=apifyState_();if(active&&active.stage!=='complete'){if(['running','advance'].indexOf(active.stage)>=0)return apifyPending_(active);throw new Error('A previous Apify start has an unknown outcome. Check Apify Console, then run resetApifySearch_ from the editor.');}
@@ -77,22 +77,22 @@ function pollApifySearch(jobId){
   if(['running','advance'].indexOf(state.stage)<0)throw new Error('Search start outcome is unknown. Check Apify Console before resetting.');
   var rawCenter=cache.get('apify-center-'+state.id);if(!rawCenter)throw new Error('Search location expired from temporary cache. Check the run in Apify Console, then resetApifySearch_ and start again.');
   var center=JSON.parse(rawCenter),run;
-  if(state.stage==='advance'){if(state.failure||state.rawCount>=state.settings.count||state.index>=state.settings.industries.length)return finishApify_(state,center,state.failure||'');return advanceApify_(state,center,props.getProperty('APIFY_TOKEN'));}
-  try{run=apifyRequest_(props.getProperty('APIFY_TOKEN'),'actor-runs/'+encodeURIComponent(state.runId)).data;}catch(e){throw e;}
+  if(state.stage==='advance'){if(state.failure||state.rawCount>=state.settings.count||state.index>=state.settings.industries.length)return finishApify_(state,center,state.failure||'');return advanceApify_(state,center,configuredProperty_(props,'APIFY_TOKEN'));}
+  try{run=apifyRequest_(configuredProperty_(props,'APIFY_TOKEN'),'actor-runs/'+encodeURIComponent(state.runId)).data;}catch(e){throw e;}
   if(!run||['READY','RUNNING','TIMING-OUT','ABORTING'].indexOf(run.status)>=0)return apifyPending_(state);
   var failure=run.status!=='SUCCEEDED'?'Apify '+String(run.status||'failed')+'. No paid retry was sent.':'';
   if(failure&&!run.defaultDatasetId)return finishApify_(state,center,failure);
   if(!/^[A-Za-z0-9_-]+$/.test(run.defaultDatasetId||''))throw new Error('Invalid Apify dataset ID.');
-  var remaining=state.settings.count-state.rawCount,items=apifyRequest_(props.getProperty('APIFY_TOKEN'),'datasets/'+run.defaultDatasetId+'/items?format=json&clean=true&limit='+remaining);
+  var remaining=state.settings.count-state.rawCount,items=apifyRequest_(configuredProperty_(props,'APIFY_TOKEN'),'datasets/'+run.defaultDatasetId+'/items?format=json&clean=true&limit='+remaining);
   if(!Array.isArray(items))throw new Error('Apify dataset must be a list.');items=items.slice(0,remaining);
   var rows=records_('ApifyBusinesses'),map={};rows.forEach(function(x){map[x.id]=x;});var overture=records_('Catalog');
   items.forEach(function(p){var x=normalizeApifyPlace_(p,state.settings.industries[state.index],overture);if(!x)return;var old=map[x.id];if(old&&!x.phone){x.phone=old.phone;x.phone_source=old.phone_source;x.phone_observed_at=old.phone_observed_at;}map[x.id]=x;if(state.ids.indexOf(x.id)<0)state.ids.push(x.id);});
   var merged=Object.keys(map).map(function(k){return map[k];});if(merged.length>4000)throw new Error('Apify storage limit exceeded. Export/manage source rows; pending dataset remains available in Apify.');
   writeRecords_('ApifyBusinesses',merged);SpreadsheetApp.flush();state.rawCount+=items.length;state.index++;state.stage='advance';state.failure=failure;saveApifyState_(state);
   if(failure||state.rawCount>=state.settings.count||state.index>=state.settings.industries.length)return finishApify_(state,center,failure);
-  return advanceApify_(state,center,props.getProperty('APIFY_TOKEN'));
+  return advanceApify_(state,center,configuredProperty_(props,'APIFY_TOKEN'));
  });
 }
 function advanceApify_(state,center,token){try{return beginApifyRun_(state,center,token);}catch(e){if(state.stage==='starting'&&!e.apifyRejected){var rows=records_('ApifyBusinesses').filter(function(x){return state.ids.indexOf(x.id)>=0;});if(!rows.length)rows=records_('Catalog');var partial=apifyResult_(rows,state,center,false,e.message+' Start outcome is unknown; check Apify Console before resetting.');partial.startUncertain=true;return partial;}return finishApify_(state,center,e.message);}}
 // Editor-only recovery: verify/abort the known remote run first; never silently retry starts.
-function resetApifySearch_(){var props=authorize_();return locked_(function(){var state=apifyState_();if(state&&state.stage==='running'&&state.runId)apifyRequest_(props.getProperty('APIFY_TOKEN'),'actor-runs/'+encodeURIComponent(state.runId)+'/abort','post',{});props.setProperty('APIFY_SEARCH','');return true;});}
+function resetApifySearch_(){var props=authorize_();return locked_(function(){var state=apifyState_();if(state&&state.stage==='running'&&state.runId)apifyRequest_(configuredProperty_(props,'APIFY_TOKEN'),'actor-runs/'+encodeURIComponent(state.runId)+'/abort','post',{});props.setProperty('APIFY_SEARCH','');return true;});}
