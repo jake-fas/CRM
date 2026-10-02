@@ -11,8 +11,10 @@ Scope ruling: The user has expressly requested implementation and repository set
 - [x] Test normalizing real documented output, exclusion identity across sources, conservative Overture phone fallback, request caps and secret-safe transport.
 - [x] Implement async start/status orchestration, bounded paid runs, reuse, permanent minimal storage and fallback. Test authorization, reload/duplicate polling, sparse results and failure paths.
 - [x] Add primary provider selection, progress/resume UI, CRM prefill and source labels; update seven-file clasp allowlist and fictional demo.
-- [ ] Document Google/Apify credentials, source-rights limitation, Overture refresh, cost bounds, private sharing and GitHub deployment. Run tests and browser checks, review, commit and push.
+- [x] Document Google/Apify credentials, source-rights limitation, Overture refresh, cost bounds, private sharing and GitHub deployment. Run tests and browser checks, review, commit and push.
 
 Live Apify and Google acceptance require credentials not available in this session. Test doubles do not establish real phone accuracy or actor billing. Cap behavior and actual costs must be checked in the first account-backed run before enabling broader usage.
 
 Verification before publication: 41/41 unit tests, all six desktop/mobile browser workflows (Apify, catalog, Google preview) passed. clasp file-status includes exactly seven app files. Independent review found an interrupted-run replay window and insufficient address agreement in phone fallback; both were reproduced and fixed through RED→GREEN tests. Final review found no remaining blocker.
+
+Published implementation commit acd7f70 to the supplied GitHub repository and verified remote main. Live Apps Script deployment remains disabled until the account setup is complete.
