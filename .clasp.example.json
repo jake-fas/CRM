@@ -1,0 +1,7 @@
+{
+  "scriptId": "REPLACE_WITH_BOUND_SCRIPT_ID",
+  "rootDir": ".",
+  "scriptExtensions": [".gs"],
+  "htmlExtensions": [".html"],
+  "jsonExtensions": [".json"]
+}

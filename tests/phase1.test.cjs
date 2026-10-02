@@ -1,0 +1,163 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const path=require('node:path');
+const root=path.join(__dirname,'..');
+function load(files=['Core.gs','Provider.gs'],extra={}) {
+  const c=vm.createContext({...extra,console,Date,JSON,Math});
+  for(const file of files) vm.runInContext(fs.readFileSync(path.join(root,file),'utf8'),c,{filename:file});
+  return c;
+}
+function input(extra={}) {return {address:'123 Example St, Boulder, CO',category:'restaurant',count:50,radius:3000,zips:'80301, 80302',...extra};}
+function place(n,extra={}) {return {id:'id'+n,displayName:{text:'Business '+n},formattedAddress:n+' Example St, Boulder, CO 80301',addressComponents:[{types:['postal_code'],shortText:'80301'}],nationalPhoneNumber:n%2?'(303) 555-0100':undefined,...extra};}
+test('validation rejects invalid counts/radii/address/category/ZIP without coercion surprises',()=>{
+  const c=load();
+  for(const bad of [{count:0},{count:61},{count:1.5},{radius:NaN},{radius:50001},{address:''},{category:'arbitrary'},{zips:'803'}]) assert.throws(()=>c.validateRequest(input(bad)));
+  assert.equal(c.validateRequest(input()).count,50);
+});
+test('CSV handles BOM, quotes, multiline fields and rejects ambiguous/malformed records',()=>{
+ const c=load();
+ const rows=c.parseExclusions('\ufeffname,address,reason\r\n"Coffee, Inc","123 Main St","Customer\nactive"');
+ assert.equal(rows[0].name,'Coffee, Inc'); assert.equal(rows[0].reason,'Customer\nactive');
+ for(const csv of ['name,address\nOnly a name,','name,address\n"broken,street','name,address\na,b,extra']) assert.throws(()=>c.parseExclusions(csv));
+ assert.equal(c.parseExclusions('place_id,reason\nid1,current_customer')[0].place_id,'id1');
+});
+test('bounded paging is 20+20+10; no details, retries or oversampling',()=>{
+ const c=load(); const calls=[]; let n=0;
+ const out=c.acquireCandidates(c.validateRequest(input()),{geocode:()=>({latitude:40,longitude:-105}),search:b=>{
+   calls.push(b); const places=Array.from({length:b.pageSize},()=>place(++n)); return {places,nextPageToken:'p'+calls.length};
+ }});
+ assert.deepEqual(calls.map(b=>b.pageSize),[20,20,10]);assert.equal(out.rawCount,50);assert.equal(out.searchRequests,3);assert.equal(out.estimatedGrossUsd,.11);
+ assert.equal(calls[0].rankPreference,'DISTANCE');assert.equal(calls[0].includePureServiceAreaBusinesses,false);
+ assert.equal(calls[1].pageToken,'p1');
+});
+test('sparse results and repeated tokens stop; hotels do not claim distance ranking',()=>{
+ const c=load();let calls=0;
+ const deps={geocode:()=>({latitude:40,longitude:-105}),search:()=>{calls++;return {places:[place(calls)],nextPageToken:'same'};}};
+ const out=c.acquireCandidates(c.validateRequest(input({category:'hotel'})),deps);
+ assert.equal(calls,2);assert.equal(out.ranking,'relevance');assert.equal(out.rawCount,2);
+ let hotelBody; c.acquireCandidates(c.validateRequest(input({category:'hotel'})),{geocode:deps.geocode,search:b=>{hotelBody=b;return {places:[]};}});
+ assert.equal(hotelBody.rankPreference,undefined);
+});
+test('filtering keeps missing phones, handles duplicates, ZIPs and exact branch exclusion',()=>{
+ const c=load();const ps=[place(1),place(2),place(2),place(3),place(4,{addressComponents:[]})];
+ const out=c.filterCandidates(ps,[{name:'Business 1',address:'1 Example St, Boulder, CO 80301'},{name:'Business 3',address:'other address'}],['80301']);
+ assert.equal(out.eligible.length,2);assert.equal(out.eligible[0].id,'id2');assert.equal(out.excluded,1);assert.equal(out.duplicates,1);assert.equal(out.filtered,1);
+});
+test('formula strings stay literal and invalid calendar dates fail',()=>{
+ const c=load();assert.equal(c.literalCell('=IMPORTXML("evil")'),'\'=IMPORTXML("evil")');
+ for(const date of ['2026-02-30','bad']) assert.throws(()=>c.dateValue(date));
+ assert.equal(c.dateValue('2026-10-02'),'2026-10-02');
+});
+test('Google adapter uses Enterprise-only allowlist and sanitized provider errors',()=>{
+ let fetched=[];const c=load(undefined,{UrlFetchApp:{fetch:(url,options)=>{fetched.push({url,options});return {getResponseCode:()=>200,getContentText:()=>JSON.stringify({places:[]})};}}});
+ const d=c.googleDependencies('secret',()=>{});d.search({textQuery:'restaurants'});
+ const mask=fetched[0].options.headers['X-Goog-FieldMask'];assert.ok(mask.includes('places.nationalPhoneNumber'));assert.ok(mask.includes('places.regularOpeningHours'));assert.ok(!mask.includes('reviews'));assert.ok(!mask.includes('*'));
+ const e=load(undefined,{UrlFetchApp:{fetch:()=>({getResponseCode:()=>403,getContentText:()=>'{"key":"secret"}'})}});
+ assert.throws(()=>e.googleDependencies('secret',()=>{}).search({}),err=>!err.message.includes('secret')&&err.message.includes('403'));
+});
+test('industry inclusion and priority fill raw cap without topping up after exclusions',()=>{
+ const c=load();const calls=[];
+ const out=c.acquireCandidates(c.validateRequest(input({industries:['car_repair','restaurant'],count:25})),{geocode:()=>({latitude:40,longitude:-105}),search:b=>{
+ calls.push(b);return {places:Array.from({length:b.includedType==='car_repair'?5:b.pageSize},(_,i)=>place(calls.length*100+i))};}});
+ assert.deepEqual(calls.map(b=>b.includedType),['car_repair','restaurant']);assert.deepEqual(calls.map(b=>b.pageSize),[20,20]);assert.equal(out.rawCount,25);
+ assert.throws(()=>c.validateRequest(input({industries:[]})));assert.throws(()=>c.validateRequest(input({industries:['restaurant','restaurant']})));
+});
+function services(email='rep@example.com') {
+ const sheets={},props={ALLOWED_EMAILS:'rep@example.com',SPREADSHEET_ID:'sheet',GOOGLE_MAPS_API_KEY:'secret',PRIVACY_URL:'https://example.com/privacy',TERMS_URL:'https://example.com/terms'};let locked=false,fetchCount=0,flushedUnderLock=false;
+ const spreadsheet={getSheetByName:n=>sheets[n]||null,insertSheet:n=>sheets[n]={rows:[],maxRows:1000,maxColumns:26,getMaxRows(){return this.maxRows;},getMaxColumns(){return this.maxColumns;},insertRowsAfter(after,count){this.maxRows+=count;},insertColumnsAfter(after,count){this.maxColumns+=count;},getLastRow(){return this.rows.length;},getDataRange(){return {getValues:()=>this.rows.map(r=>r.slice())};},getRange(r,col,nr,nc){const s=this;if(r+nr-1>s.maxRows||col+nc-1>s.maxColumns)throw new Error('Range exceeds grid limits');return {setNumberFormat(){return this;},setValues(values){values.forEach((v,i)=>{s.rows[r-1+i]=v.map(x=>typeof x==='string'&&x[0]==="'"?x.slice(1):x);});return this;},clearContent(){for(let i=r-1;i<r-1+nr;i++)s.rows[i]=Array(nc).fill('');return this;}};},setFrozenRows(){}}};
+ const propertyStore={getProperty:k=>props[k]||null,setProperty:(k,v)=>{props[k]=String(v);},getProperties:()=>({...props})};
+ const extra={PropertiesService:{getScriptProperties:()=>propertyStore},Session:{getActiveUser:()=>({getEmail:()=>email})},SpreadsheetApp:{openById:()=>spreadsheet,flush:()=>{flushedUnderLock=locked;}},Utilities:{getUuid:()=>require('node:crypto').randomUUID(),formatDate:()=> '2026-10-02'},LockService:{getScriptLock:()=>({tryLock:()=>{if(locked)return false;locked=true;return true;},releaseLock:()=>{locked=false;}})},UrlFetchApp:{fetch:url=>{fetchCount++;return {getResponseCode:()=>200,getContentText:()=>url.includes('geocode')?JSON.stringify({status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]}):JSON.stringify({places:[place(1)]})};}}};
+ const c=load(['Core.gs','Provider.gs','Catalog.gs','Code.gs'],extra);
+ return {c,sheets,props,get locked(){return locked;},get fetchCount(){return fetchCount;},get flushedUnderLock(){return flushedUnderLock;}};
+}
+test('unauthorized service access makes no network requests or writes',()=>{
+ const s=services('intruder@example.com');assert.throws(()=>s.c.generateLeads(input()));assert.throws(()=>s.c.getCRM());assert.throws(()=>s.c.saveLead({business_name:'X'}));assert.equal(s.fetchCount,0);assert.equal(Object.keys(s.sheets).length,0);
+});
+test('CRM saves only rep-entered fields and preserves activity history on archive/restore',()=>{
+ const s=services();const lead=s.c.saveLead({business_name:'My own label',place_id:'id1',status:'prospect',follow_up:'2026-10-02',displayName:{text:'Forbidden'},nationalPhoneNumber:'Forbidden'});
+ const a={lead_id:lead.id,type:'OSV',date:'2026-10-01',notes:'Card left; owner away',request_id:'token-1'};
+ s.c.logActivity(a);s.c.logActivity(a);assert.equal(s.c.getCRM().activities.length,1);
+ const archived=s.c.saveLead({...lead,status:'archived',expected_updated_at:lead.updated_at});assert.equal(s.c.getCRM().leads[0].due_bucket,'none');
+ const r=s.c.generateLeads(input({count:1}));assert.equal(r.excluded,1);assert.equal(r.eligible.length,0);
+ s.c.saveLead({...archived,status:'prospect',expected_updated_at:archived.updated_at});assert.equal(s.c.getCRM().leads[0].due_bucket,'today');assert.equal(s.c.getCRM().activities.length,1);
+ assert.ok(!JSON.stringify(s.sheets).includes('Forbidden'));
+ assert.throws(()=>s.c.saveLead({...lead,id:'unknown'}));assert.throws(()=>s.c.logActivity({...a,lead_id:'unknown'}));
+});
+test('invalid import keeps old data; duplicate imports merge and strings are literal',()=>{
+ const s=services();s.c.importExclusions('place_id,name,address,reason\nid1,=evil,,customer');s.c.importExclusions('place_id,name,address,reason\nid1,=evil,,customer');
+ assert.equal(s.sheets.Exclusions.rows.length,2);assert.throws(()=>s.c.importExclusions('name,address\nmissing,'));assert.equal(s.sheets.Exclusions.rows.length,2);
+ const p=s.c.saveLead({business_name:'=IMPORTXML("evil")'});assert.equal(p.business_name,'=IMPORTXML("evil")');
+});
+test('quota exhaustion and provider errors release locks; no secret disclosure',()=>{
+ const s=services();s.props.DAILY_SEARCH_LIMIT='0';assert.throws(()=>s.c.generateLeads(input()),/daily/i);assert.equal(s.fetchCount,0);assert.equal(s.locked,false);
+ const f=services();f.c.UrlFetchApp.fetch=()=>{throw new Error('secret provider detail');};assert.throws(()=>f.c.generateLeads(input()),e=>!e.message.includes('secret'));assert.equal(f.locked,false);
+});
+test('industry preferences persist ordered inclusion and reject unknown or duplicate IDs',()=>{
+ const s=services();const order=[{id:'car_repair',included:true},...s.c.INDUSTRIES.filter(x=>x.id!=='car_repair').map(x=>({id:x.id,included:false}))];
+ s.c.saveIndustryPreferences(order);assert.equal(s.c.getBootstrap().industries[0].id,'car_repair');assert.equal(s.c.getBootstrap().industries[1].included,false);
+ assert.throws(()=>s.c.saveIndustryPreferences([{id:'bogus',included:true}]));
+});
+test('responsive UI has industry reorder and CRM interfaces without unsafe persistence/rendering',()=>{
+ const html=fs.readFileSync(path.join(root,'Index.html'),'utf8');
+ for(const name of ['generateLeads','saveIndustryPreferences','saveLead','logActivity','getCRM','importExclusions'])assert.ok(html.includes(name),name);
+ assert.ok(html.includes('pointerdown'));assert.ok(html.includes('viewport'));assert.ok(html.includes('textContent'));
+ assert.ok(!/localStorage|sessionStorage|\.innerHTML\s*=/.test(html));
+ const scripts=[...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];scripts.forEach(x=>new vm.Script(x[1]));
+});
+test('Sheet mutations flush while locked; flush failure still releases lock',()=>{
+ const s=services();s.c.saveLead({business_name:'X'});assert.equal(s.flushedUnderLock,true);assert.equal(s.locked,false);
+ s.c.SpreadsheetApp.flush=()=>{throw new Error('flush failed');};assert.throws(()=>s.c.saveLead({business_name:'Y'}));assert.equal(s.locked,false);
+});
+test('duplicate place IDs cannot fragment CRM history; missing public policy setup blocks lookup',()=>{
+ const s=services();s.c.saveLead({business_name:'First',place_id:'id1'});assert.throws(()=>s.c.saveLead({business_name:'Second',place_id:'id1'}),/already/);assert.equal(s.c.getCRM().leads.length,1);
+ delete s.props.PRIVACY_URL;assert.throws(()=>s.c.generateLeads(input()),/policy/i);assert.equal(s.fetchCount,0);
+});
+
+test('licensed catalog import persists provenance and search uses only one geocode, no Places lookup',()=>{
+ const s=services();const p={id:'overture:fixture',name:'Fictional Coffee',address:'1 Example St, Boulder, CO, 80301',phone:'+13035550100',website:'https://example.com',latitude:40,longitude:-105,industry:'restaurant',zip:'80301',source:'overture',release:'2026-09-23.1',source_dataset:'meta',license:'CDLA-Permissive-2.0',confidence:.9,operating_status:'open'};
+ const pack=JSON.stringify({schema:'fieldbook-overture-v1',release:p.release,places:[p]});
+ s.c.importCatalog(pack);s.props.DAILY_SEARCH_LIMIT='0';
+ const out=s.c.generateCatalogLeads(input({count:1}));assert.equal(out.eligible[0].id,p.id);assert.equal(out.eligible[0].nationalPhoneNumber,p.phone);assert.equal(out.searchRequests,0);assert.equal(s.fetchCount,1);
+ assert.ok(JSON.stringify(s.sheets.Catalog).includes('CDLA-Permissive-2.0'));
+ s.c.saveLead({business_name:p.name,place_id:p.id,phone:p.phone});s.c.importCatalog(pack);assert.equal(s.c.getCRM().leads[0].phone,p.phone);
+ assert.throws(()=>s.c.importCatalog(pack.replace('overture','google')));assert.equal(s.c.getCRM().leads.length,1);
+});
+
+test('catalog imports expand the real Sheet grid and smaller refreshes remove trailing candidates',()=>{
+ const s=services();const p={id:'overture:fixture',name:'Fictional Coffee',address:'1 Example St, Boulder, CO, 80301',phone:'+13035550100',website:'',latitude:40,longitude:-105,industry:'restaurant',zip:'80301',source:'overture',release:'2026-09-23.1',source_dataset:'meta',license:'CDLA-Permissive-2.0',confidence:.9,operating_status:'open'};
+ const pack=ps=>JSON.stringify({schema:'fieldbook-overture-v1',release:p.release,places:ps});
+ s.c.importCatalog(pack(Array.from({length:1200},(_,i)=>({...p,id:'overture:fixture-'+i}))));assert.equal(s.c.records_('Catalog').length,1200);assert.ok(s.sheets.Catalog.maxRows>=1201);
+ s.c.importCatalog(pack([p]));assert.equal(s.c.records_('Catalog').length,1);
+ const saved=s.c.saveLead({business_name:'Own business'});s.c.importCatalog(pack([p]));assert.equal(s.c.getCRM().leads[0].id,saved.id);
+});
+test('activity append expands a full Sheet grid before writing the next history record',()=>{
+ const s=services();const lead=s.c.saveLead({business_name:'Own business'});const sheet=s.c.sheet_('Activities');sheet.maxRows=1;
+ s.c.logActivity({lead_id:lead.id,type:'call',date:'2026-10-02',notes:'Called',request_id:'grid-test'});assert.equal(s.c.getCRM().activities.length,1);assert.equal(sheet.maxRows,2);
+});
+test('stale whole-record saves cannot overwrite a newer phone or status',()=>{
+ const s=services();const lead=s.c.saveLead({business_name:'First',phone:'1111111111'});
+ const updated=s.c.saveLead({...lead,phone:'2222222222',status:'archived',expected_updated_at:lead.updated_at});
+ assert.throws(()=>s.c.saveLead({...lead,next_plan:'Stale desktop plan',expected_updated_at:lead.updated_at}),/changed|refresh/i);
+ assert.throws(()=>s.c.saveLead({...updated,next_plan:'Missing version'}),/changed|refresh/i);
+ const stored=s.c.getCRM().leads[0];assert.equal(stored.phone,'2222222222');assert.equal(stored.status,'archived');
+});
+test('every accepted save advances the version even when the clock stays still',()=>{
+ const s=services();const RealDate=Date;s.c.Date=class extends RealDate{constructor(...args){super(...(args.length?args:['2026-10-02T12:00:00.000Z']));}};
+ const lead=s.c.saveLead({business_name:'Clock test'});
+ const next=s.c.saveLead({...lead,expected_updated_at:lead.updated_at});
+ assert.ok(next.updated_at>lead.updated_at);
+ const third=s.c.saveLead({...next,expected_updated_at:next.updated_at});assert.ok(third.updated_at>next.updated_at);
+});
+test('editing a place ID cannot merge separate CRM histories',()=>{
+ const s=services();s.c.saveLead({business_name:'First',place_id:'id1'});const second=s.c.saveLead({business_name:'Second',place_id:'id2'});
+ assert.throws(()=>s.c.saveLead({...second,place_id:'id1',expected_updated_at:second.updated_at}),/already/);
+ assert.equal(s.c.getCRM().leads.find(x=>x.id===second.id).place_id,'id2');
+});
+test('last daily search request returns its paid partial page without another call',()=>{
+ const s=services();s.props.DAILY_SEARCH_LIMIT='1';
+ s.c.UrlFetchApp.fetch=url=>({getResponseCode:()=>200,getContentText:()=>url.includes('geocode')?JSON.stringify({status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]}):JSON.stringify({places:[place(1)],nextPageToken:'more'})});
+ const out=s.c.generateLeads(input({count:50}));assert.equal(out.rawCount,1);assert.equal(out.eligible.length,1);assert.equal(out.searchRequests,1);assert.equal(out.budgetCapReached,true);
+ assert.equal(JSON.parse(s.props.DAILY_USAGE).search,1);
+});

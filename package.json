@@ -1,0 +1,14 @@
+{
+  "name": "fieldbook-crm",
+  "version": "0.2.0",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "demo": "node tools/demo-server.cjs",
+    "clasp": "clasp",
+    "deploy": "node tools/deploy.cjs",
+    "catalog:convert": "node tools/convert-overture.cjs"
+  },
+  "devDependencies": { "@google/clasp": "3.4.1" }
+}
