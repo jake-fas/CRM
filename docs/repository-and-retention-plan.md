@@ -22,7 +22,7 @@
 - [x] Add pinned clasp tooling, allowlisted upload files, tests and opt-in deployment workflows; verify file selection and missing-secret failure.
 - [x] Correct the previously reproduced CRM concurrency, duplicate identity, draft-loss and partial-budget bugs through RED→GREEN tests.
 - [x] Add validated Overture snapshot conversion/import and local catalog selection, with source provenance and explicit Google/retained separation; run regression tests.
-- [ ] Review the complete repository, run unit/browser checks, publish the initial commit to the supplied empty GitHub repository, and verify the remote commit.
+- [x] Review the complete repository, run unit/browser checks, publish the initial commit to the supplied empty GitHub repository, and verify the remote commit.
 
 ## Account-dependent completion
 

@@ -23,12 +23,13 @@ Final verification: 16/16 automated tests passed; desktop 1365px and phone-sized
 
 
 ## Repository and retention extension — October 2, 2026
-Research: official Overture Places licenses and Boulder sample verified; strict converter produced617records/601phones. Rights support retention with notices; accuracy and manager contacts remain unverified.
+Research: official Overture Places licenses and Boulder sample verified; strict converter produced 617 records / 601 phones. Rights support retention with notices; accuracy and manager contacts remain unverified.
 Ruling: retain Overture catalog; keep Google Places preview ephemeral — resolves permanent source storage without assuming scraping grants rights; cost if wrong: re-evaluate license obligations before importing a newer source.
 Ruling: keep daily catalog query geocoding temporary via Google, no external business discovery calls — simplest existing adapter; cost if wrong: replace geocoder, no permanent catalog depends on Google business fields.
 Repository: dedicated clone of supplied empty GitHub repo; no unrelated checkout or extra worktree. Code-only tracking and ignored credentials/data.
-Fixes: optimistic version guard, monotonic timestamps, duplicate ID update guard, activity draft preservation, paid partial results preserved through requestbudget cap. Regression RED→GREEN in unit/browser checks.
+Fixes: optimistic version guard, monotonic timestamps, duplicate ID update guard, activity draft preservation, paid partial results preserved through request budget cap. Regression RED→GREEN in unit/browser checks.
 Retention: licensed JSON converter, provenance validation, Catalog import/refresh, local priority/distance selection, catalog-only CRM prefill, license bundles.
-Deployment: clasp3.4.1 pinned; opt-in main-only sequential workflow; six source files only; credential/config staging stays inside temporary root, respects clasp traversal guard. No Google credentials available, live deployment pending.
-Fresh review: repository_review found Sheetgrid capacity bug and README provider ambiguity. Fixedgrid sizing with two tests RED→GREEN; clarified provider behavior.
-Verification: npm test30/30; desktop1365 and mobile390 browser checks passed for Googlepreview and retainedcatalog workflows; actual clasp file-status lists exactlysix appfiles. No actualiPhone/liveSheetsAPItest yet.
+Deployment: clasp 3.4.1 pinned; opt-in main-only sequential workflow; six source files only; credential/config staging stays inside temporary root, respects clasp traversal guard. No Google credentials available, live deployment pending.
+Fresh review: repository_review found Sheet grid capacity bug and README provider ambiguity. Fixed grid sizing with two tests RED→GREEN; clarified provider behavior.
+Verification: npm test 30/30; desktop 1365px and mobile 390px browser checks passed for Google preview and retained catalog workflows; actual clasp file-status lists exactly six app files. No actual iPhone/live Sheets API test yet.
+Published: initial commit b62f4ed pushed to https://github.com/jake-fas/CRM and verified against the remote main ref. GitHub tests started; Apps Script deployment correctly skipped until account setup and explicit enablement.
