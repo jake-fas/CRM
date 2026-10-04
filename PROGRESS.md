@@ -59,4 +59,5 @@ Setup: docs/apify-setup.md covers token/key entry in Script Properties, private 
 - Live Census check matched the public Boulder library address. Local validation: 47 tests pass, including no-Google integration and failed-geocode/no-paid-actor checks.
 - Owner authorized deployment-only clasp access and account-level Apps Script API activation. GitHub's encrypted credentials and project/deployment bindings are configured; main-branch auto-deployment is enabled. Provider keys and private identifiers remain outside Git.
 - A deployment credential was inadvertently included in a form verification response. It was revoked and replaced before workflow activation. Subsequent verification reads saved secret names only.
-- First GitHub deployment and five-result Apify test remain to be verified after this push.
+- GitHub deployment for commit 93b55ac succeeded and updated the same existing app to version 3. The live page confirmed free Census lookup and recognized the configured Apify token.
+- A five-candidate, one-industry test around the public Boulder library returned five businesses with public phones. Repeating it reused saved businesses with zero new acquisition requests and a zero charge ceiling. The initial ceiling was $0.75; actual billing and phone accuracy are not claimed verified. The pilot's one daily actor allowance was consumed by this test.
