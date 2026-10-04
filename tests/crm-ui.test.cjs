@@ -80,3 +80,8 @@ if(process.env.CRM_UI_BROWSER==='1')test('desktop and mobile: fast call, default
 
 });
 
+
+test('discovery offers table filters, bulk transfer, and two ranking modes without per-card creation',()=>{
+ for(const id of ['resultTable','resultSearch','resultIndustry','resultPhone','resultWebsite','resultRating','resultReviews','resultDistance','transferButton','discoveryMode','transferDialog'])assert.match(html,new RegExp('id="'+id+'"'));
+ assert.match(html,/function filteredResults\(/);assert.match(html,/function renderResultsTable\(/);assert.match(html,/rpc\('transferToCRM'/);assert.doesNotMatch(html,/Create CRM record/);assert.doesNotMatch(html,/storage rights unverified/i);
+});

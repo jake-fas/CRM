@@ -328,3 +328,30 @@ test('including many industries keeps batch ceiling useful and never starts more
  for(let i=0;i<8&&out.pending;i++)out=s.c.pollApifySearch(pending.jobId);assert.equal(out.pending,undefined);assert.equal(t.starts,6);assert.ok(out.costCeilingUsd<=.75);assert.ok(t.requests.filter(x=>x.url.includes('/actors/')).every(x=>x.url.includes('maxTotalChargeUsd=0.125')));
  const single=services(),p=apifyTransport(single,[[apifyItem(1)]]);single.props.DAILY_APIFY_RUN_LIMIT='1';single.c.startApifySearch(input({industries:Array.from(single.c.INDUSTRIES,x=>x.id)}));assert.ok(p.requests.find(x=>x.url.includes('/actors/')).url.includes('maxTotalChargeUsd=0.75'));
 });
+
+test('general mode selects all included industries by distance while priority mode retains fill ranking',()=>{
+ const c=load(['Core.gs','Catalog.gs']);const rows=[{id:'far',name:'Far restaurant',address:'A',industry:'restaurant',latitude:40.01,longitude:-105,zip:'80301'},{id:'near',name:'Near dentist',address:'B',industry:'dentist',latitude:40.0001,longitude:-105,zip:'80301'}];const settings=c.validateRequest(input({count:1,industries:['restaurant','dentist'],discoveryMode:'general'}));
+ assert.equal(settings.discoveryMode,'general');assert.equal(c.selectCatalogCandidates(rows,settings,{latitude:40,longitude:-105}).places[0].id,'near');settings.discoveryMode='prioritized';assert.equal(c.selectCatalogCandidates(rows,settings,{latitude:40,longitude:-105}).places[0].id,'far');assert.throws(()=>c.validateRequest(input({discoveryMode:'bogus'})));
+});
+test('general Apify collection uses one bounded mixed area run and true categories with existing metadata',()=>{
+ const s=services(),items=[{...apifyItem(1),categoryName:'Dentist',totalScore:4.8,reviewsCount:12,website:'https://example.com',city:'Boulder',state:'Colorado'},{...apifyItem(2),categoryName:'Restaurant'}],t=apifyTransport(s,[items]);const pending=s.c.startApifySearch(input({count:2,industries:['restaurant','dentist'],discoveryMode:'general'}));const b=JSON.parse(t.requests.find(x=>x.url.includes('/actors/')).options.payload);assert.equal(b.allPlacesNoSearchAction,'all_places_no_search_mouse');assert.equal(b.searchStringsArray.length,0);assert.equal(b.maxCrawledPlacesPerSearch,2);const out=s.c.pollApifySearch(pending.jobId);assert.equal(t.starts,1);assert.equal(out.ranking,'distance');assert.equal(s.c.records_('ApifyBusinesses')[0].industry,'dentist');assert.equal(out.eligible[0].rating,4.8);assert.equal(out.eligible[0].websiteUri,'https://example.com');
+});
+test('bulk transfer resolves saved source facts, respects exclusions and preserves existing CRM on replay',()=>{
+ const s=services();const p=s.c.normalizeApifyPlace_(apifyItem(1),'restaurant',[]);s.c.writeRecords_('ApifyBusinesses',[p]);const request={ids:[p.id],status:'prospect',next_plan:'Call owner',request_id:'bulk-1'};const out=s.c.transferToCRM(request);assert.equal(out.created,1);assert.equal(out.leads[0].phone,p.phone);const edited=s.c.saveLead({...out.leads[0],contact_name:'My confirmed owner',expected_updated_at:out.leads[0].updated_at});const retry=s.c.transferToCRM(request);assert.equal(retry.created,0);assert.equal(retry.leads[0].contact_name,edited.contact_name);assert.equal(s.c.records_('CRM').length,1);assert.equal(s.fetchCount,0);assert.throws(()=>s.c.transferToCRM({...request,ids:['fake']}));s.c.importExclusions('place_id,name,address\n'+p.id+',,');assert.throws(()=>s.c.transferToCRM(request),/excluded/i);
+});
+
+test('general discovery does not mistake a prior single-industry cache for a mixed nearby collection',()=>{
+ const s=services(),t=apifyTransport(s,[[apifyItem(1)],[{...apifyItem(2),categoryName:'Dentist'}]]);const first=s.c.startApifySearch(input({count:1,industries:['restaurant']}));s.c.pollApifySearch(first.jobId);const second=s.c.startApifySearch(input({count:1,industries:['restaurant','dentist'],discoveryMode:'general'}));assert.equal(second.pending,true);assert.equal(t.starts,2);
+});
+
+test('bulk transfer rejects two provider IDs for the same branch before writing either row',()=>{
+ const s=services(),a=s.c.normalizeApifyPlace_(apifyItem(1),'restaurant',[]);s.c.writeRecords_('ApifyBusinesses',[a,{...a,id:'apify:alternate'}]);assert.throws(()=>s.c.transferToCRM({ids:[a.id,'apify:alternate'],request_id:'bulk-duplicates'}),/same business|duplicate/i);assert.equal(s.c.records_('CRM').length,0);
+});
+
+test('mixed area category mapping recognizes auto repair and studio labels before included-industry filtering',()=>{
+ const s=services();assert.equal(s.c.apifyIndustry_({categoryName:'Auto repair shop'}),'car_repair');assert.equal(s.c.apifyIndustry_({categoryName:'Pilates studio'}),'gym');
+});
+
+test('temporary Google preview is explicitly labeled so bulk transfer stays unavailable',()=>{
+ const s=services(),out=s.c.generateLeads(input({count:1,industries:['restaurant'],discoveryMode:'prioritized'}));assert.equal(out.provider,'google');
+});

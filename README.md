@@ -6,7 +6,7 @@ Start with [complete Apify/Google setup](docs/apify-setup.md), [GitHub deploymen
 
 ## What the rep can do
 
-- Enter a starting address and request 1–60 raw candidates, default 50.
+- Enter a starting address and request 1–60 raw candidates, default 50. Choose **General** for a mixed area collection displayed closest first, or **Prioritized** to fill by the ordered industries.
 - Include industries and drag them into priority order. Arrow controls also work on phones and keyboards. Save the order for the next session.
 - See public branch phones, websites, address, opening hours when available, and Maps links. Call from a personal phone, then use Mark called to record the outcome.
 - Import a CSV of existing customers/exclusions. Current-customer, archived, and do-not-contact CRM records also exclude matching locations automatically.
@@ -14,7 +14,9 @@ Start with [complete Apify/Google setup](docs/apify-setup.md), [GitHub deploymen
 - Log calls, OSVs, card drops, appointments, decision-maker meetings, not-interested outcomes, and notes with dates.
 - See due/overdue follow-ups. Archive and restore businesses without losing history.
 
-Industry order is a fill priority: the first included industry may supply all 50 candidates. **Apify:** one industry per async run, requesting only remaining raw candidates, with a $0.75 batch ceiling and local Overture phone/failure backup. Recent source rows can avoid new scraping. **Retained catalog:** local selection uses industry priority then distance, a hard radius and zero Places requests. **Google preview:** later industries are searched only when earlier ones leave the raw limit unfilled, with at most six search requests; its radius is a bias. Neither mode acquires replacements after exclusions, or guarantees an exhaustive globally nearest list. ZIP filters can reduce results.
+**General** uses one capped Apify area run, filters the returned places to included industries, and sorts the saved candidates by distance. The saved Overture catalog also sorts all included industries by distance in General mode. General ignores drag order and may return fewer than 50 when the area collection or category matching misses places; it does not guarantee the exhaustive 50 nearest businesses. **Prioritized** keeps the earlier industry fill order: the first included industry may supply all 50. Apify runs request only the remaining raw candidates with a $0.75 batch ceiling and local Overture phone/failure backup. Recent matching source rows can avoid a new scrape. Google preview supports Prioritized only. Neither mode acquires replacements after exclusions. ZIP filters can reduce results.
+
+Results use a table with Overview, Contact info, Social media, Rating, Reviews, Leads enrichment, and All fields views. Search, industry, phone, website, rating, review-count, and distance filters work on the returned results, with sortable columns. Fields that were not supplied by the source remain blank; viewing them does not start enrichment calls. **Transfer to CRM** selects all returned businesses by default. Deselect any rows, choose a common status, next plan, or follow-up date, and transfer them together. Existing CRM records and history are kept.
 
 ## Account-free local demo
 

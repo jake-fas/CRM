@@ -9,6 +9,17 @@ function normalizeApifyPlace_(p,industry,overture){
  if(!x.name||!x.address)return null;
  fillOverturePhone_(x,overture);return x;
 }
+function apifyIndustry_(p){
+ var categories=[p.categoryName].concat(Array.isArray(p.categories)?p.categories:[]).map(normalized).filter(Boolean);
+ var match=INDUSTRIES.find(function(x){return categories.some(function(c){return c===normalized(x.label)||c===normalized(x.id)||c===normalized(x.googleType);});});
+ if(match)return match.id;
+ var primary=categories[0]||'';
+ if(/autorepair|carrepair|mechanic/.test(primary))return 'car_repair';
+ if(/pilates|fitnessstudio/.test(primary))return 'gym';
+ if(/dental|dentist/.test(primary))return 'dentist';
+ if(/restaurant/.test(primary))return 'restaurant';
+ return 'unknown';
+}
 function fillOverturePhone_(x,overture){
  if(!x.phone){
   var matches=overture.filter(function(o){return o.operating_status!=='permanently_closed'&&normalized(o.name)===normalized(x.name)&&normalized(o.address)===normalized(x.address)&&o.zip===x.zip&&publicPhone_(o.phone)&&distanceMeters_(x,{latitude:Number(o.latitude),longitude:Number(o.longitude)})<=50;});
@@ -17,7 +28,8 @@ function fillOverturePhone_(x,overture){
  if(!x.phone){x.phone_source='';x.phone_observed_at='';}return x;
 }
 function apifyActorInput_(settings,center,index,remaining){
- return {searchStringsArray:[INDUSTRIES.find(function(x){return x.id===settings.industries[index];}).label],customGeolocation:{type:'Point',coordinates:[center.longitude,center.latitude],radiusKm:settings.radius/1000},maxCrawledPlacesPerSearch:remaining,language:'en',scrapePlaceDetailPage:false,scrapeContacts:false,maxReviews:0,maxImages:0,maxQuestions:0};
+ var input={searchStringsArray:settings.discoveryMode==='general'?[]:[INDUSTRIES.find(function(x){return x.id===settings.industries[index];}).label],customGeolocation:{type:'Point',coordinates:[center.longitude,center.latitude],radiusKm:settings.radius/1000},maxCrawledPlacesPerSearch:remaining,language:'en',scrapePlaceDetailPage:false,scrapeContacts:false,maxReviews:0,maxImages:0,maxQuestions:0};
+ if(settings.discoveryMode==='general')input.allPlacesNoSearchAction='all_places_no_search_mouse';return input;
 }
 function apifyRequest_(token,path,method,body){
  var response;try{response=UrlFetchApp.fetch('https://api.apify.com/v2/'+path,{method:method||'get',headers:{Authorization:'Bearer '+token},contentType:'application/json',payload:body===undefined?undefined:JSON.stringify(body),muteHttpExceptions:true});}catch(e){throw new Error('Apify network request failed. No automatic retry was sent.');}
@@ -32,7 +44,7 @@ function apifyBudget_(reserve){
 }
 function apifyState_(){var raw=PropertiesService.getScriptProperties().getProperty('APIFY_SEARCH');return raw?JSON.parse(raw):null;}
 function saveApifyState_(state){PropertiesService.getScriptProperties().setProperty('APIFY_SEARCH',JSON.stringify(state));}
-function apifyPending_(state){var industry=INDUSTRIES.find(function(x){return x.id===state.settings.industries[state.index];});return {pending:true,jobId:state.id,industry:industry?industry.label:'finishing results',rawCount:state.rawCount};}
+function apifyPending_(state){var industry=INDUSTRIES.find(function(x){return x.id===state.settings.industries[state.index];});return {pending:true,jobId:state.id,industry:state.settings.discoveryMode==='general'?'nearby businesses':industry?industry.label:'finishing results',rawCount:state.rawCount};}
 function beginApifyRun_(state,center,token){
  apifyBudget_(true);state.stage='starting';state.runId='';state.runsStarted++;saveApifyState_(state);
  // Persist the reservation first. A lost start response is ambiguous, not permission to retry.
@@ -43,11 +55,16 @@ function beginApifyRun_(state,center,token){
 function apifyResult_(rows,state,center,cacheHit,reason){
  var out=selectCatalogCandidates(rows,state.settings,center);
  if(rows.length&&rows[0].source==='apify'){
-  out.provider='apify';out.ranking='apify_priority_distance';var overture=records_('Catalog');out.places.forEach(function(p){var r=Object.assign({},rows.find(function(x){return x.id===p.id;}));fillOverturePhone_(r,overture);p.nationalPhoneNumber=r.phone;p.source='apify';p.retentionAllowed=false;p.crmPrefill=true;p.sourceRelease='';p.sourceLicense='rights-unverified';p.phoneSource=r.phone_source;p.phoneObservedAt=r.phone_observed_at;p.attributions=[{provider:'Apify / Google Maps · storage rights unverified',providerUri:'https://apify.com/compass/crawler-google-places'}];});
+  out.provider='apify';out.ranking=state.settings.discoveryMode==='general'?'distance':'apify_priority_distance';var overture=records_('Catalog'),meta=apifyDisplayMetadata_(out.places.map(function(p){return p.id;}));out.places.forEach(function(p){var r=Object.assign({},rows.find(function(x){return x.id===p.id;})),m=meta[p.id]||{};fillOverturePhone_(r,overture);p.nationalPhoneNumber=r.phone;p.source='apify';p.retentionAllowed=false;p.crmPrefill=true;p.sourceRelease='';p.sourceLicense='rights-unverified';p.phoneSource=r.phone_source;p.phoneObservedAt=r.phone_observed_at;p.websiteUri=m.website||'';if(r.industry==='unknown'&&m.categoryName)p.primaryTypeDisplayName={text:String(m.categoryName).slice(0,100)};p.rating=Number.isFinite(Number(m.totalScore))?Number(m.totalScore):null;p.reviewsCount=Number.isInteger(Number(m.reviewsCount))?Number(m.reviewsCount):null;p.street=m.street||'';p.city=m.city||'';p.state=m.state||'';p.countryCode=m.countryCode||'';p.googleMapsUri=m.url||'';p.attributions=[{provider:'Apify / Google Maps',providerUri:'https://apify.com/compass/crawler-google-places'}];});
  }
  var exclusions=records_('Exclusions');records_('CRM').filter(function(x){return BLOCKED_STATUSES.indexOf(x.status)>=0;}).forEach(function(x){exclusions.push({place_id:x.place_id,name:x.business_name,address:x.address,reason:x.status});});
  var filtered=filterCandidates(out.places,exclusions,state.settings.zips);delete out.places;
  return Object.assign(out,filtered,{rawCount:out.provider==='overture'||state.rawCount===undefined?out.rawCount:state.rawCount,requested:state.settings.count,searchRequests:cacheHit?0:state.runsStarted,estimatedGrossUsd:0,costCeilingUsd:cacheHit?0:state.runsStarted*state.perRunCap,costIsCeiling:true,cacheHit:!!cacheHit,fallbackReason:reason||'',generatedAt:new Date().toISOString(),demo:false});
+}
+function apifyDisplayMetadata_(ids){
+ var wanted={};ids.forEach(function(id){wanted[id]=true;});var groups={},result={};
+ records_('ApifyPulls').forEach(function(row){var key=row.run_id+':'+row.item_index;(groups[key]||(groups[key]=[])).push(row);});
+ Object.keys(groups).forEach(function(key){var chunks=groups[key].sort(function(a,b){return Number(a.part)-Number(b.part);});try{var item=JSON.parse(chunks.map(function(x){return x.json;}).join('')),id='apify:'+item.placeId;if(wanted[id])result[id]=item;}catch(e){/* An incomplete archive item does not hide a valid business listing. */}});return result;
 }
 function finishApify_(state,center,reason){
  var rows=records_('ApifyBusinesses').filter(function(x){return state.ids.indexOf(x.id)>=0;});
@@ -65,8 +82,9 @@ function startApifySearch(input){
   var center=censusGeocode(settings.address,reserveRequest_),state={id:Utilities.getUuid(),settings:settings,index:0,rawCount:0,ids:[],runsStarted:0,perRunCap:0,maxRuns:0};
   // Snapshot facts are local. Missing-phone matching consults this same catalog at completion.
   var cached=selectCatalogCandidates(fresh,settings,center);
-  if(cached.rawCount>=settings.count){delete state.rawCount;return apifyResult_(fresh,state,center,true);}
-  state.maxRuns=Math.min(settings.industries.length,6,apifyBudget_(false));state.perRunCap=Math.floor(.75/state.maxRuns*10000)/10000;
+  var sameGeneral=active&&active.stage==='complete'&&active.settings&&active.settings.discoveryMode==='general'&&normalized(active.settings.address)===normalized(settings.address)&&active.settings.radius===settings.radius&&active.settings.count>=settings.count&&JSON.stringify(active.settings.industries.slice().sort())===JSON.stringify(settings.industries.slice().sort())&&JSON.stringify(active.settings.zips)===JSON.stringify(settings.zips);
+  if(cached.rawCount>=settings.count&&(settings.discoveryMode!=='general'||sameGeneral)){delete state.rawCount;return apifyResult_(fresh,state,center,true);}
+  state.maxRuns=Math.min(settings.discoveryMode==='general'?1:settings.industries.length,6,apifyBudget_(false));state.perRunCap=Math.floor(.75/state.maxRuns*10000)/10000;
   if(all.length+settings.count>4000)throw new Error('Apify storage limit: 4,000 businesses. Export and manage old source rows before scraping. CRM history is separate.');
   CacheService.getScriptCache().put('apify-center-'+state.id,JSON.stringify(center),3600);
   try{return beginApifyRun_(state,center,token);}catch(e){if(state.stage==='starting'&&!e.apifyRejected){var fallback=apifyResult_(overture,state,center,false,e.message+' Start outcome is unknown; check Apify Console before resetting.');fallback.startUncertain=true;return fallback;}return finishApify_(state,center,e.message);}
@@ -88,10 +106,10 @@ function pollApifySearch(jobId){
   var remaining=state.settings.count-state.rawCount,items=apifyRequest_(configuredProperty_(props,'APIFY_TOKEN'),'datasets/'+run.defaultDatasetId+'/items?format=json&clean=true&limit='+remaining);
   if(!Array.isArray(items))throw new Error('Apify dataset must be a list.');items=items.slice(0,remaining);retainApifyItems_(state.runId,items);
   var rows=records_('ApifyBusinesses'),map={};rows.forEach(function(x){map[x.id]=x;});var overture=records_('Catalog');
-  items.forEach(function(p){var x=normalizeApifyPlace_(p,state.settings.industries[state.index],overture);if(!x)return;var old=map[x.id];if(old&&!x.phone){x.phone=old.phone;x.phone_source=old.phone_source;x.phone_observed_at=old.phone_observed_at;}map[x.id]=x;if(state.ids.indexOf(x.id)<0)state.ids.push(x.id);});
+  items.forEach(function(p){var industry=state.settings.discoveryMode==='general'?apifyIndustry_(p):state.settings.industries[state.index];var x=normalizeApifyPlace_(p,industry,overture);if(!x)return;var old=map[x.id];if(old&&!x.phone){x.phone=old.phone;x.phone_source=old.phone_source;x.phone_observed_at=old.phone_observed_at;}map[x.id]=x;if(state.ids.indexOf(x.id)<0)state.ids.push(x.id);});
   var merged=Object.keys(map).map(function(k){return map[k];});if(merged.length>4000)throw new Error('Apify storage limit exceeded. Export/manage source rows; pending dataset remains available in Apify.');
   writeRecords_('ApifyBusinesses',merged);SpreadsheetApp.flush();state.rawCount+=items.length;state.index++;state.stage='advance';state.failure=failure;saveApifyState_(state);
-  if(failure||state.rawCount>=state.settings.count||state.index>=state.settings.industries.length)return finishApify_(state,center,failure);
+  if(failure||state.rawCount>=state.settings.count||state.index>=state.settings.industries.length||state.settings.discoveryMode==='general')return finishApify_(state,center,failure);
   return advanceApify_(state,center,configuredProperty_(props,'APIFY_TOKEN'));
  });
 }

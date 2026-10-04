@@ -107,7 +107,9 @@ function validateRequest(input) {
   });
   var zips=textValue(input.zips,100).split(/[\s,;]+/).filter(Boolean);
   if(zips.some(function(z){return !/^\d{5}$/.test(z);})||zips.length>8) throw new Error('Enter up to eight five-digit ZIP codes.');
-  return {address:address,count:count,radius:radius,industries:industries.slice(),zips:zips};
+  var discoveryMode=input.discoveryMode||'prioritized';
+  if(['prioritized','general'].indexOf(discoveryMode)<0)throw new Error('Choose General or Prioritized discovery.');
+  return {address:address,count:count,radius:radius,industries:industries.slice(),zips:zips,discoveryMode:discoveryMode};
 }
 function parseExclusions(csv) {
   if(typeof csv!=='string'||csv.length>1000000) throw new Error('CSV limit: 1 MB.');

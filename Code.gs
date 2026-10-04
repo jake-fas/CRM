@@ -121,6 +121,7 @@ function checkRequestBudget_(kind,reserve){
 function reserveRequest_(kind){checkRequestBudget_(kind,true);}
 function generateLeads(input){
  var props=authorize_(),settings=validateRequest(input),key=configuredProperty_(props,'GOOGLE_MAPS_API_KEY');
+ if(settings.discoveryMode==='general')throw new Error('General discovery is available with Apify or the saved catalog. Choose Prioritized for Google preview.');
  if(!key)throw new Error('Google API key is not configured. The builder must finish setup.');
  if(!policiesConfigured_(props))throw new Error('Public privacy policy and terms URLs must be configured before Google lookup.');
  return locked_(function(){
@@ -129,7 +130,7 @@ function generateLeads(input){
    records_('CRM').filter(function(x){return BLOCKED_STATUSES.indexOf(x.status)>=0;}).forEach(function(x){exclusions.push({place_id:x.place_id,name:x.business_name,address:x.address,reason:x.status});});
    var out=acquireCandidates(settings,googleDependencies(key,reserveRequest_),remainingSearchRequests);
    var filtered=filterCandidates(out.places,exclusions,settings.zips);
-   delete out.places;return Object.assign(out,filtered,{requested:settings.count,generatedAt:new Date().toISOString(),demo:false});
+   delete out.places;return Object.assign(out,filtered,{requested:settings.count,generatedAt:new Date().toISOString(),demo:false,provider:'google'});
  });
 }
 function importExclusions(csv){
@@ -148,6 +149,28 @@ function crmSnapshot_(includeActivities){var today=today_();return {leads:record
 function getLeadActivities(leadId){
  authorize_();leadId=textValue(leadId,100);
  return locked_(function(){if(!records_('CRM').some(function(x){return x.id===leadId;}))throw new Error('Choose an existing CRM business.');return records_('Activities').filter(function(x){return x.lead_id===leadId;});},true);
+}
+function transferToCRM(input){
+ authorize_();input=input||{};var ids=input.ids,token=textValue(input.request_id,100),status=textValue(input.status||'prospect',50),plan=textValue(input.next_plan,3000),followUp=dateValue(input.follow_up);
+ if(!Array.isArray(ids)||!ids.length||ids.length>60||!token||!CRM_STATUSES.includes(status))throw new Error('Select 1–60 businesses and a valid CRM status.');
+ if(BLOCKED_STATUSES.indexOf(status)>=0)throw new Error('Use an active status for transferred prospects.');
+ var unique={};ids=ids.map(function(id){id=textValue(id,300);if(!id||unique[id])throw new Error('Choose each business only once.');unique[id]=true;return id;});
+ return locked_(function(){
+  var apify=records_('ApifyBusinesses'),catalog=records_('Catalog'),current=records_('CRM'),excluded=records_('Exclusions'),sources={};
+  apify.concat(catalog).forEach(function(row){sources[row.id]=row;});
+  var newItems=[],existing=[],planned={};ids.forEach(function(id){var row=sources[id];if(!row)throw new Error('A selected business is not in saved source data. Refresh results.');
+   var prior=current.find(function(x){return x.place_id===id||normalized(x.business_name)===normalized(row.name)&&normalized(x.address)===normalized(row.address);});
+   if(excluded.some(function(x){return matchesExclusion({id:id,displayName:{text:row.name},formattedAddress:row.address},x);})||prior&&BLOCKED_STATUSES.indexOf(prior.status)>=0)throw new Error('A selected business is excluded or already blocked in CRM. Deselect it before transfer.');
+   if(prior){existing.push(prior);return;}var branchKey=normalized(row.name)+'|'+normalized(row.address);if(planned[branchKey])throw new Error('The same business appears twice in the selection. Deselect one duplicate before transfer.');planned[branchKey]=true;newItems.push(row);
+  });
+  if(current.length+newItems.length>4000)throw new Error('CRM capacity reached. Transfer fewer businesses.');
+  var leads=existing.slice(),sheet=sheet_('CRM');newItems.forEach(function(row,index){
+   // A replay finds this place_id and never replaces notes or confirmed contacts.
+   var now=new Date().toISOString(),saved=Object.assign(validateLead({place_id:row.id,business_name:row.name,address:row.address,phone:row.phone,status:status,next_plan:plan,follow_up:followUp}),{id:Utilities.getUuid(),created_at:now,updated_at:now,request_id:token+':'+index});
+   writeRecordAt_(sheet,'CRM',sheet.getLastRow()+1,saved);leads.push(saved);
+  });
+  return {created:newItems.length,existing:existing.length,leads:leads.map(function(x){return Object.assign({},x,{due_bucket:followUpBucket(x,today_())});})};
+ });
 }
 function saveLead(record){
  authorize_();var clean=validateLead(record);var token=textValue(record&&record.request_id,100);
