@@ -37,19 +37,17 @@ function selectCatalogCandidates(rows,settings,center){
  if(!center||!Number.isFinite(center.latitude)||!Number.isFinite(center.longitude))throw new Error('Starting address could not be located.');
  var selected=rows.map(function(p){return {p:p,priority:settings.industries.indexOf(p.industry),distance:distanceMeters_(center,{latitude:Number(p.latitude),longitude:Number(p.longitude)})};}).filter(function(x){return x.priority>=0&&x.p.operating_status!=='permanently_closed'&&Number.isFinite(x.distance)&&x.distance<=settings.radius&&(!settings.zips.length||settings.zips.indexOf(x.p.zip)>=0);}).sort(function(a,b){return a.priority-b.priority||a.distance-b.distance||a.p.id.localeCompare(b.p.id);}).slice(0,settings.count);
  var places=selected.map(function(x){var p=x.p;return {id:p.id,displayName:{text:p.name},formattedAddress:p.address,nationalPhoneNumber:p.phone,websiteUri:p.website,addressComponents:[{types:['postal_code'],shortText:p.zip}],primaryTypeDisplayName:{text:INDUSTRIES.find(function(i){return i.id===p.industry;}).label},retentionAllowed:true,source:'overture',sourceRelease:p.release,sourceDatasets:p.source_dataset,sourceLicense:p.license,distanceMeters:Math.round(x.distance),attributions:[{provider:'Overture Maps · '+p.source_dataset+' · '+p.license,providerUri:'https://docs.overturemaps.org/attribution/'}]};});
- return {places:places,rawCount:places.length,searchRequests:0,geocodeRequests:1,estimatedGrossUsd:.005,ranking:'catalog_priority_distance',requestCapReached:false,budgetCapReached:false,provider:'overture'};
+ return {places:places,rawCount:places.length,searchRequests:0,geocodeRequests:1,estimatedGrossUsd:0,ranking:'catalog_priority_distance',requestCapReached:false,budgetCapReached:false,provider:'overture'};
 }
 function importCatalog(json){
  authorize_();var rows=parseCatalogSnapshot(json);
  return locked_(function(){var s=sheet_('Catalog'),oldLast=s.getLastRow();writeRecords_('Catalog',rows);if(oldLast>rows.length+1)s.getRange(rows.length+2,1,oldLast-rows.length-1,CATALOG_HEADERS.length).clearContent();return {count:rows.length,release:rows[0].release};});
 }
 function generateCatalogLeads(input){
- var props=authorize_(),settings=validateRequest(input),key=configuredProperty_(props,'GOOGLE_MAPS_API_KEY');
- if(!key)throw new Error('Set GOOGLE_MAPS_API_KEY for address geocoding. The retained catalog does not use Google Places.');
- if(!policiesConfigured_(props))throw new Error('Configure public privacy and terms URLs before address lookup.');
+ authorize_();var settings=validateRequest(input);
  return locked_(function(){
   var rows=records_('Catalog');if(!rows.length)throw new Error('Import a licensed Overture territory snapshot first.');
-  checkRequestBudget_('geocode',false);var center=googleDependencies(key,reserveRequest_).geocode(settings.address);
+  checkRequestBudget_('geocode',false);var center=censusGeocode(settings.address,reserveRequest_);
   var out=selectCatalogCandidates(rows,settings,center),exclusions=records_('Exclusions');
   records_('CRM').filter(function(x){return BLOCKED_STATUSES.indexOf(x.status)>=0;}).forEach(function(x){exclusions.push({place_id:x.place_id,name:x.business_name,address:x.address,reason:x.status});});
   var filtered=filterCandidates(out.places,exclusions,settings.zips);delete out.places;return Object.assign(out,filtered,{requested:settings.count,generatedAt:new Date().toISOString(),demo:false});

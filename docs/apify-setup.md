@@ -6,7 +6,7 @@ The default provider is now **Apify**, with **Overture** as the saved fallback. 
 
 1. Sign into [Apify Console](https://console.apify.com/). Open [Compass Google Maps Scraper](https://apify.com/compass/crawler-google-places) and allow access to this actor. Check the current event prices in your account; the public page advertises **from $1.50 / 1,000 places**, not a guaranteed all-in rate for every plan. Basic public branch phone output is documented. This integration does not enable website contacts, personal lead enrichment, reviews or images.
 2. In Apify account settings, create/copy an API token. Keep it private. Apify authorization is sent in a server-side header, never in the browser or URL.
-3. Create/select a Google Cloud project, enable **Geocoding API**, enable billing and make a key restricted to Geocoding API. Google Places API is unnecessary for the default Apify path. Enable Places API (New) only if you want the optional temporary preview, and then add that API to the key restrictions.
+3. No Google Cloud project, billing account or Google key is needed for Apify/Overture searches. Starting addresses use the free U.S. Census geocoder. Enter a full U.S. street address, city, state and ZIP. Locations are approximate street-range matches; ambiguous or unmatched addresses stop before any paid Apify run. Google credentials are optional and only used by the separate Google Places preview.
 
 ## 2. Connect the Sheet and source code
 
@@ -36,9 +36,9 @@ Apps Script → **Project Settings → Script Properties → Add script property
 |---|---|
 | `ALLOWED_EMAILS` | Your signed-in Google email; later the rep's email, comma-separated |
 | `APIFY_TOKEN` | Your private Apify API token |
-| `GOOGLE_MAPS_API_KEY` | Your Google Geocoding API key |
-| `PRIVACY_URL` | Public HTTPS privacy page |
-| `TERMS_URL` | Public HTTPS terms page |
+| `GOOGLE_MAPS_API_KEY` | Leave `NOT_CONFIGURED`; optional Google preview only |
+| `PRIVACY_URL` | Public HTTPS privacy page; required for optional Google preview |
+| `TERMS_URL` | Public HTTPS terms page; required for optional Google preview |
 | `DAILY_APIFY_RUN_LIMIT` | Start with `1` for one-industry testing; default is `6` |
 | `DAILY_GEOCODE_LIMIT` | Start with `3`; default is `10` |
 | `DAILY_SEARCH_LIMIT` | Set `0` if Google Places preview should be disabled |
@@ -69,7 +69,7 @@ The catalog can supply fallback results when Apify fails or returns no usable re
 
 - Search industries one at a time in your priority order. Request only the remaining raw count. The first industry may fill the entire list. Returned order is not a guarantee of the globally closest businesses; the app applies distance/radius/ZIP checks to the collected pool.
 - A **$0.75 Apify batch cap** is divided across all included industries and passed as `maxTotalChargeUsd` on each run. Runs request a 300-second timeout and disable restart on error. No enrichment add-ons or automatic paid retry. A small per-industry allocation may yield partial results or fail if the actor's minimum price exceeds it. Actual billing must be checked in Console; UI displays a ceiling, not a claimed invoice.
-- One starting-address geocode is modeled at **$0.005 outside its free allowance**. Thus the configured acquisition ceiling is at most **$0.755**, excluding taxes and separate subscription/other account usage. Default six daily actor runs cap this app's requested actor budgets at no more than $4.50/day; set a lower limit for the pilot. Each industry consumes a run, including failed starts. Quotas are shared by the script and reset by Denver date. Google billing alerts are not hard caps.
+- Starting-address geocoding is free through Census and needs no key. The acquisition ceiling is at most **$0.75**, excluding taxes and separate subscription/other account usage. Default six daily actor runs cap this app's requested actor budgets at no more than $4.50/day; the pilot uses one daily run. Each industry consumes a run, including failed starts. Quotas are shared by the script and reset by Denver date.
 - If enough fresh matching Apify rows exist (within 30 days), use them without a new scrape. Rows are retained indefinitely; 30 days is a reuse freshness threshold, not a deletion policy. Old data can remain inaccurate. Excluded rows are still stored, so they can become eligible later without immediate reacquisition. Up to 4,000 Apify source records and 4,000 Overture records are supported separately.
 - Store business name, full address, public phone plus stable ID, coordinates, industry, ZIP, timestamps and phone source needed for matching and ranking. Discard reviews, images, owner updates, personal enrichment and raw payloads. Refreshing source rows does not overwrite CRM phones, notes or activity history. Full name/address formatting differences can prevent cross-source exclusions; confirm imported exclusions against displayed branches.
 - The starting coordinate is held temporarily in CacheService for up to one hour, never in the permanent business tables. Eviction can happen earlier. Pending job IDs and settings support reload/resume; do not close the app indefinitely during a paid run. If location/result cache expires, the app asks for recovery rather than starting another paid job automatically.

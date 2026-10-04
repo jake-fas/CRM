@@ -42,7 +42,7 @@ Do not put secrets in source files, spreadsheet cells, browser code, or chat. Af
 
 ## Configure Google discovery
 
-1. Create/select a Google Cloud project with billing. Enable **Geocoding API** for the retained catalog's starting-address lookup. Enable **Places API (New)** only if you also want the temporary Google preview.
+1. Create/select a Google Cloud project with billing. The Apify/Overture path uses free Census geocoding and requires no Google key or billing. Enable **Geocoding API** and **Places API (New)** only if you want the optional temporary Google preview.
 2. Create an API key restricted to those two APIs. Requests originate on Google's Apps Script servers; a browser HTTP-referrer restriction does not apply to server UrlFetch calls. Keep the key in Script Properties; use API quotas and the app's request caps. Configure a billing budget alert, remembering alerts are not a hard spending cap.
 3. Add Script Property `GOOGLE_MAPS_API_KEY` with the key. Do not paste it into this README.
 4. Publish public privacy/terms pages before enabling discovery. A separate `public-policy` Apps Script project is included: create a standalone project, paste its `Code.gs` and `Policy.html`, set `POLICY_CONTACT` to the operator's contact, and deploy that static project to anyone. It contains no CRM access, API key, or private business data. Its `/exec` URL is the privacy URL; `/exec?page=terms` is the terms URL. Test both without sign-in. Alternatively host those policies on your own public website. If your account forbids public deployment, use your website.

@@ -47,7 +47,7 @@ function apifyResult_(rows,state,center,cacheHit,reason){
  }
  var exclusions=records_('Exclusions');records_('CRM').filter(function(x){return BLOCKED_STATUSES.indexOf(x.status)>=0;}).forEach(function(x){exclusions.push({place_id:x.place_id,name:x.business_name,address:x.address,reason:x.status});});
  var filtered=filterCandidates(out.places,exclusions,state.settings.zips);delete out.places;
- return Object.assign(out,filtered,{rawCount:out.provider==='overture'||state.rawCount===undefined?out.rawCount:state.rawCount,requested:state.settings.count,searchRequests:cacheHit?0:state.runsStarted,estimatedGrossUsd:.005,costCeilingUsd:cacheHit?.005:state.runsStarted*state.perRunCap+.005,costIsCeiling:true,cacheHit:!!cacheHit,fallbackReason:reason||'',generatedAt:new Date().toISOString(),demo:false});
+ return Object.assign(out,filtered,{rawCount:out.provider==='overture'||state.rawCount===undefined?out.rawCount:state.rawCount,requested:state.settings.count,searchRequests:cacheHit?0:state.runsStarted,estimatedGrossUsd:0,costCeilingUsd:cacheHit?0:state.runsStarted*state.perRunCap,costIsCeiling:true,cacheHit:!!cacheHit,fallbackReason:reason||'',generatedAt:new Date().toISOString(),demo:false});
 }
 function finishApify_(state,center,reason){
  var rows=records_('ApifyBusinesses').filter(function(x){return state.ids.indexOf(x.id)>=0;});
@@ -55,13 +55,13 @@ function finishApify_(state,center,reason){
  var out=apifyResult_(rows,state,center,false,reason);state.stage='complete';saveApifyState_(state);CacheService.getScriptCache().put('apify-result-'+state.id,JSON.stringify(out),3600);return out;
 }
 function startApifySearch(input){
- var props=authorize_(),settings=validateRequest(input),token=configuredProperty_(props,'APIFY_TOKEN'),key=configuredProperty_(props,'GOOGLE_MAPS_API_KEY');
- if(!token)throw new Error('Set APIFY_TOKEN in Apps Script Properties.');if(!key||!policiesConfigured_(props))throw new Error('Configure the Google geocoding key and public policy URLs.');
+ var props=authorize_(),settings=validateRequest(input),token=configuredProperty_(props,'APIFY_TOKEN');
+ if(!token)throw new Error('Set APIFY_TOKEN in Apps Script Properties.');
  return locked_(function(){
   var active=apifyState_();if(active&&active.stage!=='complete'){if(['running','advance'].indexOf(active.stage)>=0)return apifyPending_(active);throw new Error('A previous Apify start has an unknown outcome. Check Apify Console, then run resetApifySearch_ from the editor.');}
   var all=records_('ApifyBusinesses'),overture=records_('Catalog'),fresh=all.filter(function(x){return Date.now()-Date.parse(x.retrieved_at)<30*86400000;});
   if(fresh.length<settings.count)apifyBudget_(false);checkRequestBudget_('geocode',false);
-  var center=googleDependencies(key,reserveRequest_).geocode(settings.address),state={id:Utilities.getUuid(),settings:settings,index:0,rawCount:0,ids:[],runsStarted:0,perRunCap:Math.floor(.75/settings.industries.length*10000)/10000};
+  var center=censusGeocode(settings.address,reserveRequest_),state={id:Utilities.getUuid(),settings:settings,index:0,rawCount:0,ids:[],runsStarted:0,perRunCap:Math.floor(.75/settings.industries.length*10000)/10000};
   // Snapshot facts are local. Missing-phone matching consults this same catalog at completion.
   var cached=selectCatalogCandidates(fresh,settings,center);
   if(cached.rawCount>=settings.count){delete state.rawCount;return apifyResult_(fresh,state,center,true);}

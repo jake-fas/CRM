@@ -10,6 +10,12 @@ function load(files=['Core.gs','Provider.gs'],extra={}) {
   return c;
 }
 function input(extra={}) {return {address:'123 Example St, Boulder, CO',category:'restaurant',count:50,radius:3000,zips:'80301, 80302',...extra};}
+function censusResponse(){return {result:{addressMatches:[{matchedAddress:'123 EXAMPLE ST, BOULDER, CO, 80301',coordinates:{x:-105,y:40}}]}};}
+test('free Census geocoder rejects uncertain responses and never uses a Google key',()=>{
+ let response=censusResponse(),calls=[],reserved=[];const c=load(undefined,{UrlFetchApp:{fetch:(url)=>{calls.push(url);return {getResponseCode:()=>200,getContentText:()=>JSON.stringify(response)};}}});
+ const center=c.censusGeocode('123 Example St, Boulder, CO',kind=>reserved.push(kind));assert.equal(center.latitude,40);assert.equal(center.longitude,-105);assert.ok(calls[0].startsWith('https://geocoding.geo.census.gov/'));assert.ok(!calls[0].includes('key='));assert.deepEqual(reserved,['geocode']);
+ for(const matches of [[],[{},{}],[{coordinates:{x:'-105',y:40}}],[{coordinates:{x:-105,y:100}}]]){response={result:{addressMatches:matches}};assert.throws(()=>c.censusGeocode('Address',()=>{}));}
+});
 function place(n,extra={}) {return {id:'id'+n,displayName:{text:'Business '+n},formattedAddress:n+' Example St, Boulder, CO 80301',addressComponents:[{types:['postal_code'],shortText:'80301'}],nationalPhoneNumber:n%2?'(303) 555-0100':undefined,...extra};}
 test('validation rejects invalid counts/radii/address/category/ZIP without coercion surprises',()=>{
   const c=load();
@@ -68,7 +74,7 @@ function services(email='rep@example.com') {
  const sheets={},props={ALLOWED_EMAILS:'rep@example.com',SPREADSHEET_ID:'sheet',GOOGLE_MAPS_API_KEY:'secret',PRIVACY_URL:'https://example.com/privacy',TERMS_URL:'https://example.com/terms'};let locked=false,fetchCount=0,flushedUnderLock=false;
  const spreadsheet={getSheetByName:n=>sheets[n]||null,insertSheet:n=>sheets[n]={rows:[],maxRows:1000,maxColumns:26,getMaxRows(){return this.maxRows;},getMaxColumns(){return this.maxColumns;},insertRowsAfter(after,count){this.maxRows+=count;},insertColumnsAfter(after,count){this.maxColumns+=count;},getLastRow(){return this.rows.length;},getDataRange(){return {getValues:()=>this.rows.map(r=>r.slice())};},getRange(r,col,nr,nc){const s=this;if(r+nr-1>s.maxRows||col+nc-1>s.maxColumns)throw new Error('Range exceeds grid limits');return {setNumberFormat(){return this;},setValues(values){values.forEach((v,i)=>{s.rows[r-1+i]=v.map(x=>typeof x==='string'&&x[0]==="'"?x.slice(1):x);});return this;},clearContent(){for(let i=r-1;i<r-1+nr;i++)s.rows[i]=Array(nc).fill('');return this;}};},setFrozenRows(){}}};
  const propertyStore={getProperty:k=>props[k]??null,setProperty:(k,v)=>{props[k]=String(v);},getProperties:()=>({...props})};
- const extra={PropertiesService:{getScriptProperties:()=>propertyStore},Session:{getActiveUser:()=>({getEmail:()=>email})},SpreadsheetApp:{openById:()=>spreadsheet,flush:()=>{flushedUnderLock=locked;}},Utilities:{getUuid:()=>require('node:crypto').randomUUID(),formatDate:()=> '2026-10-02'},LockService:{getScriptLock:()=>({tryLock:()=>{if(locked)return false;locked=true;return true;},releaseLock:()=>{locked=false;}})},UrlFetchApp:{fetch:url=>{fetchCount++;return {getResponseCode:()=>200,getContentText:()=>url.includes('geocode')?JSON.stringify({status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]}):JSON.stringify({places:[place(1)]})};}}};
+ const extra={PropertiesService:{getScriptProperties:()=>propertyStore},Session:{getActiveUser:()=>({getEmail:()=>email})},SpreadsheetApp:{openById:()=>spreadsheet,flush:()=>{flushedUnderLock=locked;}},Utilities:{getUuid:()=>require('node:crypto').randomUUID(),formatDate:()=> '2026-10-02'},LockService:{getScriptLock:()=>({tryLock:()=>{if(locked)return false;locked=true;return true;},releaseLock:()=>{locked=false;}})},UrlFetchApp:{fetch:url=>{fetchCount++;return {getResponseCode:()=>200,getContentText:()=>url.includes('geocoding.geo.census.gov')?JSON.stringify(censusResponse()):url.includes('geocode')?JSON.stringify({status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]}):JSON.stringify({places:[place(1)]})};}}};
  const c=load(['Core.gs','Provider.gs','Catalog.gs','Code.gs'],extra);
  if(fs.existsSync(path.join(root,'Apify.gs')))vm.runInContext(fs.readFileSync(path.join(root,'Apify.gs'),'utf8'),c);
  const cache={};c.CacheService={getScriptCache:()=>({get:k=>cache[k]||null,put:(k,v)=>cache[k]=v,remove:k=>delete cache[k]})};
@@ -77,7 +83,8 @@ function services(email='rep@example.com') {
 function apifyTransport(s,batches){
  s.props.APIFY_TOKEN='private-token';s.props.DAILY_APIFY_RUN_LIMIT='20';let starts=0,reads=0;const requests=[];
  s.c.UrlFetchApp.fetch=(url,options={})=>{requests.push({url,options});let data;
- if(url.includes('geocode'))data={status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]};
+ if(url.includes('geocoding.geo.census.gov'))data=censusResponse();
+ else if(url.includes('geocode'))data={status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]};
  else if(url.includes('/actors/')){starts++;data={data:{id:'run'+starts}};}
  else if(url.includes('/actor-runs/'))data={data:{id:'run'+starts,status:'SUCCEEDED',defaultDatasetId:'dataset'+starts}};
  else{reads++;data=batches[starts-1]||[];}
@@ -116,7 +123,7 @@ test('Apify is asynchronous, preserves excluded candidates, reuses stored result
 test('sparse Apify industries request remaining raw count, divide the batch budget and never top up exclusions',()=>{
  const s=services(),t=apifyTransport(s,[[apifyItem(1)],[apifyItem(2),apifyItem(3)]]);
  const pending=s.c.startApifySearch(input({count:3,industries:['car_repair','restaurant']}));const mid=s.c.pollApifySearch(pending.jobId);assert.equal(mid.pending,true);assert.equal(t.starts,2);
- const out=s.c.pollApifySearch(pending.jobId);assert.equal(out.rawCount,3);assert.equal(out.searchRequests,2);assert.equal(out.costCeilingUsd,.755);
+ const out=s.c.pollApifySearch(pending.jobId);assert.equal(out.rawCount,3);assert.equal(out.searchRequests,2);assert.equal(out.costCeilingUsd,.75);
  const starts=t.requests.filter(x=>x.url.includes('/actors/'));assert.deepEqual(starts.map(x=>JSON.parse(x.options.payload).maxCrawledPlacesPerSearch),[3,2]);assert.ok(starts.every(x=>x.url.includes('maxTotalChargeUsd=0.375')));
 });
 test('Apify failure returns local licensed fallback with no paid retry; zero daily quota and unauthorized calls make no requests',()=>{
@@ -128,6 +135,11 @@ test('Apify failure returns local licensed fallback with no paid retry; zero dai
 });
 test('unauthorized service access makes no network requests or writes',()=>{
  const s=services('intruder@example.com');assert.throws(()=>s.c.generateLeads(input()));assert.throws(()=>s.c.getCRM());assert.throws(()=>s.c.saveLead({business_name:'X'}));assert.equal(s.fetchCount,0);assert.equal(Object.keys(s.sheets).length,0);
+});
+test('Apify and Overture address searches need no Google credential or policy URLs, and failed geocoding starts no paid actor',()=>{
+ const s=services();s.props.GOOGLE_MAPS_API_KEY='';s.props.PRIVACY_URL='';s.props.TERMS_URL='';const t=apifyTransport(s,[[apifyItem(1)]]);const pending=s.c.startApifySearch(input({count:1,industries:['restaurant']}));const out=s.c.pollApifySearch(pending.jobId);assert.equal(out.eligible.length,1);assert.equal(out.costCeilingUsd,.75);assert.ok(t.requests.every(r=>!r.url.includes('googleapis.com')));
+ const a=services();a.props.APIFY_TOKEN='token';let paid=0;a.c.UrlFetchApp.fetch=url=>{if(url.includes('api.apify.com'))paid++;return {getResponseCode:()=>200,getContentText:()=>JSON.stringify({result:{addressMatches:[]}})};};assert.throws(()=>a.c.startApifySearch(input({count:1})),/clear U.S./);assert.equal(paid,0);
+ const c=services();c.props.GOOGLE_MAPS_API_KEY='';c.props.PRIVACY_URL='';c.props.TERMS_URL='';const p={id:'overture:free',name:'Free lookup fixture',address:'123 Example St, Boulder, CO 80301',phone:'+13035550100',latitude:40,longitude:-105,industry:'restaurant',zip:'80301',source:'overture',release:'2026-09-23.1',source_dataset:'meta',license:'CDLA-Permissive-2.0',confidence:.9,operating_status:'open'};c.c.importCatalog(JSON.stringify({schema:'fieldbook-overture-v1',release:p.release,places:[p]}));assert.equal(c.c.generateCatalogLeads(input({count:1})).estimatedGrossUsd,0);
 });
 test('editor setup entry point rejects unauthorized callers before creating properties or tables',()=>{
  const s=services('intruder@example.com');s.c.SpreadsheetApp.getActiveSpreadsheet=()=>({getId:()=> 'sheet'});const before=JSON.stringify(s.props);assert.throws(()=>s.c.setupCRM(),/denied/i);assert.equal(JSON.stringify(s.props),before);assert.equal(Object.keys(s.sheets).length,0);
@@ -230,7 +242,7 @@ test('editing a place ID cannot merge separate CRM histories',()=>{
 });
 test('last daily search request returns its paid partial page without another call',()=>{
  const s=services();s.props.DAILY_SEARCH_LIMIT='1';
- s.c.UrlFetchApp.fetch=url=>({getResponseCode:()=>200,getContentText:()=>url.includes('geocode')?JSON.stringify({status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]}):JSON.stringify({places:[place(1)],nextPageToken:'more'})});
+ s.c.UrlFetchApp.fetch=url=>({getResponseCode:()=>200,getContentText:()=>url.includes('geocoding.geo.census.gov')?JSON.stringify(censusResponse()):url.includes('geocode')?JSON.stringify({status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]}):JSON.stringify({places:[place(1)],nextPageToken:'more'})});
  const out=s.c.generateLeads(input({count:50}));assert.equal(out.rawCount,1);assert.equal(out.eligible.length,1);assert.equal(out.searchRequests,1);assert.equal(out.budgetCapReached,true);
  assert.equal(JSON.parse(s.props.DAILY_USAGE).search,1);
 });

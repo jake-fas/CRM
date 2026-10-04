@@ -51,3 +51,12 @@ Setup: docs/apify-setup.md covers token/key entry in Script Properties, private 
 - Linked the ignored local clasp config to the actual project; its upload list contains exactly seven files.
 - Google authorization popup did not open in the in-app browser. User must authorize and run setup in a normal browser. Sheet initialization and web-app deployment remain unverified. Account identifiers and project bindings stay out of GitHub.
 - Local validation: 45 tests pass, including unauthorized setup rejection and no-key initialization.
+
+## Free geocoding and GitHub deployment — 2026-10-03
+
+- Apify and retained Overture searches now use the free, keyless Census address API. Google preview remains optional and disabled by its quota. Ambiguous, missing or invalid Census matches stop before paid scraping, with no paid fallback.
+- Removed the modeled Google geocode charge from Apify/Overture results; the configured Apify acquisition ceiling is $0.75. Updated setup and readiness messages so a Google key is not requested for the primary path.
+- Live Census check matched the public Boulder library address. Local validation: 47 tests pass, including no-Google integration and failed-geocode/no-paid-actor checks.
+- Owner authorized deployment-only clasp access and account-level Apps Script API activation. GitHub's encrypted credentials and project/deployment bindings are configured; main-branch auto-deployment is enabled. Provider keys and private identifiers remain outside Git.
+- A deployment credential was inadvertently included in a form verification response. It was revoked and replaced before workflow activation. Subsequent verification reads saved secret names only.
+- First GitHub deployment and five-result Apify test remain to be verified after this push.
