@@ -246,3 +246,35 @@ test('last daily search request returns its paid partial page without another ca
  const out=s.c.generateLeads(input({count:50}));assert.equal(out.rawCount,1);assert.equal(out.eligible.length,1);assert.equal(out.searchRequests,1);assert.equal(out.budgetCapReached,true);
  assert.equal(JSON.parse(s.props.DAILY_USAGE).search,1);
 });
+
+test('initial state skips activity history and authorizes before reading private data',()=>{
+ const s=services();s.c.getBootstrap();let historyReads=0;const original=s.sheets.Activities?.getDataRange;
+ if(!s.sheets.Activities)s.c.sheet_('Activities');
+ s.sheets.Activities.getDataRange=()=>{historyReads++;return {getValues:()=>s.sheets.Activities.rows};};
+ const out=s.c.getInitialState();assert.equal(out.crm.activities.length,0);assert.equal(historyReads,0);assert.ok(out.boot.industries.length);assert.ok(!JSON.stringify(out).includes('secret'));
+ const denied=services('intruder@example.com');assert.throws(()=>denied.c.getInitialState(),/denied/i);assert.equal(Object.keys(denied.sheets).length,0);
+});
+test('embedded startup JSON cannot break out of its script element and retains literal replacement tokens',()=>{
+ const s=services();const value={name:'</script><script>alert(1)</script> & $&',separator:'\u2028'};
+ const encoded=s.c.initialJSON_(value);assert.ok(!encoded.includes('<'));assert.ok(!encoded.includes('&'));assert.deepEqual(JSON.parse(encoded),value);
+});
+test('lazy history returns only the selected business and fresh writes',()=>{
+ const s=services();const a=s.c.saveLead({business_name:'A',status:'prospect'}),b=s.c.saveLead({business_name:'B',status:'prospect'});
+ s.c.logActivity({lead_id:a.id,type:'call',date:'2026-10-02',notes:'Called A',request_id:'a'});
+ s.c.logActivity({lead_id:b.id,type:'call',date:'2026-10-02',notes:'Called B',request_id:'b'});
+ assert.equal(s.c.getCRM(false).activities.length,0);assert.equal(s.c.getCRM().activities.length,2);
+ assert.equal(s.c.getLeadActivities(a.id).length,1);assert.equal(s.c.getLeadActivities(a.id)[0].notes,'Called A');
+ assert.throws(()=>s.c.getLeadActivities('missing'),/existing/i);
+});
+
+test('startup opens its Sheet once, reads each required table once and never flushes read-only requests',()=>{
+ const s=services();s.c.getInitialState();s.c.spreadsheetBinding_=undefined;let opens=0,flushes=0;const original=s.c.SpreadsheetApp.openById;s.c.SpreadsheetApp.openById=id=>{opens++;return original(id);};s.c.SpreadsheetApp.flush=()=>flushes++;
+ const reads={};for(const name of ['CRM','Catalog','Exclusions']){const sheet=s.sheets[name];sheet.getDataRange=()=>{reads[name]=(reads[name]||0)+1;return {getValues:()=>sheet.rows.map(r=>r.slice())};};}
+ s.c.getInitialState();assert.equal(opens,1);assert.equal(flushes,0);assert.deepEqual(reads,{CRM:1,Catalog:1,Exclusions:1});
+ s.sheets.CRM.rows[0][0]='changed';assert.throws(()=>s.c.getInitialState(),/headers/i);
+});
+test('page embeds private startup only after authorization and preserves literal dollar sequences',()=>{
+ const s=services();s.props.PRIVACY_URL='https://example.com/$&';let content='';s.c.HtmlService={createHtmlOutputFromFile:()=>({getContent:()=>'<body><!-- INITIAL_STATE --></body>'}),createHtmlOutput:html=>{content=html;return {setTitle(){return this;},addMetaTag(){return this;}};}};
+ s.c.doGet();const serialized=content.match(/type="application\/json">(.*?)<\/script>/)[1];assert.equal(JSON.parse(serialized).boot.privacyUrl,'https://example.com/$&');assert.ok(!content.includes('<!-- INITIAL_STATE -->'));
+ const denied=services('intruder@example.com');denied.c.HtmlService=s.c.HtmlService;assert.throws(()=>denied.c.doGet(),/denied/i);
+});

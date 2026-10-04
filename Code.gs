@@ -12,24 +12,27 @@ function authorize_(){
  if(!email||allowed.indexOf(email)<0)throw new Error('Access denied. Sign in with a configured tester account.');
  return props;
 }
-function locked_(fn){
+function locked_(fn,readOnly){
  var lock=LockService.getScriptLock();
  if(!lock.tryLock(1000))throw new Error('Another request is running. Wait before trying again.');
- try{return fn();}finally{try{SpreadsheetApp.flush();}finally{lock.releaseLock();}}
+ try{return fn();}finally{try{if(!readOnly)SpreadsheetApp.flush();}finally{lock.releaseLock();}}
 }
-function sheet_(name){
+var spreadsheetBinding_;
+function sheet_(name,skipHeaders){
  var id=PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
  if(!id)throw new Error('Run setup_ from the bound Sheet script first.');
- var ss=SpreadsheetApp.openById(id),s=ss.getSheetByName(name);
+ if(!spreadsheetBinding_||spreadsheetBinding_.id!==id)spreadsheetBinding_={id:id,value:SpreadsheetApp.openById(id)};
+ var ss=spreadsheetBinding_.value,s=ss.getSheetByName(name);
  if(!s){s=ss.insertSheet(name);s.getRange(1,1,1,TABLES_[name].length).setValues([TABLES_[name]]);s.setFrozenRows(1);}
- var headers=s.getDataRange().getValues()[0];
- if(JSON.stringify(headers)!==JSON.stringify(TABLES_[name]))throw new Error(name+' headers were changed. Restore the documented headers before continuing.');
+ if(skipHeaders!==true)validateHeaders_(name,s.getDataRange().getValues()[0]);
  return s;
 }
 function records_(name){
- var values=sheet_(name).getDataRange().getValues();
+ var values=sheet_(name,true).getDataRange().getValues();
+ validateHeaders_(name,values[0]);
  return values.slice(1).filter(function(r){return r.some(function(v){return v!=='';});}).map(function(r){var x={};TABLES_[name].forEach(function(h,i){x[h]=r[i]==null?'':String(r[i]);});return x;});
 }
+function validateHeaders_(name,headers){if(JSON.stringify(headers)!==JSON.stringify(TABLES_[name]))throw new Error(name+' headers were changed. Restore the documented headers before continuing.');}
 function writeRecords_(name,records){
  if(records.length>4000)throw new Error('Pilot capacity reached. Ask the builder to expand the storage design.');
  var s=sheet_(name);if(!records.length)return;
@@ -67,8 +70,12 @@ function setup_(){
  locked_(function(){Object.keys(TABLES_).forEach(sheet_);});
 }
 function doGet(){
- authorize_();return HtmlService.createHtmlOutputFromFile('Index').setTitle('Fieldbook — Sales CRM').addMetaTag('viewport','width=device-width, initial-scale=1');
+ var initial=getInitialState();
+ var html=HtmlService.createHtmlOutputFromFile('Index').getContent().replace('<!-- INITIAL_STATE -->',function(){return '<script id="initialState" type="application/json">'+initialJSON_(initial)+'</script>';});
+ return HtmlService.createHtmlOutput(html).setTitle('Fieldbook — Sales CRM').addMetaTag('viewport','width=device-width, initial-scale=1');
 }
+function initialJSON_(value){return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g,function(c){return '\\u'+c.charCodeAt(0).toString(16).padStart(4,'0');});}
+function getInitialState(){var props=authorize_();return locked_(function(){return {boot:bootstrapSnapshot_(props),crm:crmSnapshot_(false)};},true);}
 function today_(){return Utilities.formatDate(new Date(),'America/Denver','yyyy-MM-dd');}
 function preferences_(){
  var raw=PropertiesService.getScriptProperties().getProperty('INDUSTRY_PREFERENCES');
@@ -76,9 +83,11 @@ function preferences_(){
  return INDUSTRIES.map(function(x,i){return {id:x.id,label:x.label,included:i<2};});
 }
 function getBootstrap(){
- var props=authorize_();
+ var props=authorize_();return locked_(function(){return bootstrapSnapshot_(props);},true);
+}
+function bootstrapSnapshot_(props){
  var active=props.getProperty('APIFY_SEARCH');active=active?JSON.parse(active):null;
- return {industries:preferences_(),statuses:CRM_STATUSES,activityTypes:ACTIVITY_TYPES,today:today_(),configured:!!configuredProperty_(props,'GOOGLE_MAPS_API_KEY')&&policiesConfigured_(props),apifyConfigured:!!configuredProperty_(props,'APIFY_TOKEN'),pendingApifyJob:active&&['running','advance'].indexOf(active.stage)>=0?active.id:'',privacyUrl:props.getProperty('PRIVACY_URL')||'',termsUrl:props.getProperty('TERMS_URL')||'',exclusionCount:locked_(function(){return records_('Exclusions').length;}),catalogCount:locked_(function(){return records_('Catalog').length;}),demo:false};
+ return {industries:preferences_(),statuses:CRM_STATUSES,activityTypes:ACTIVITY_TYPES,today:today_(),configured:!!configuredProperty_(props,'GOOGLE_MAPS_API_KEY')&&policiesConfigured_(props),apifyConfigured:!!configuredProperty_(props,'APIFY_TOKEN'),pendingApifyJob:active&&['running','advance'].indexOf(active.stage)>=0?active.id:'',privacyUrl:props.getProperty('PRIVACY_URL')||'',termsUrl:props.getProperty('TERMS_URL')||'',exclusionCount:records_('Exclusions').length,catalogCount:records_('Catalog').length,demo:false};
 }
 function policiesConfigured_(props){return /^https:\/\//.test(props.getProperty('PRIVACY_URL')||'')&&/^https:\/\//.test(props.getProperty('TERMS_URL')||'');}
 function saveIndustryPreferences(order){
@@ -120,8 +129,14 @@ function importExclusions(csv){
   writeRecords_('Exclusions',merged);return {count:merged.length};
  });
 }
-function getCRM(){
- authorize_();return locked_(function(){var today=today_();return {leads:records_('CRM').map(function(x){return Object.assign(x,{due_bucket:followUpBucket(x,today)});}),activities:records_('Activities'),today:today};});
+function getCRM(includeActivities){
+ authorize_();return locked_(function(){return crmSnapshot_(includeActivities);},true);
+}
+function crmSnapshot_(includeActivities){var today=today_();return {leads:records_('CRM').map(function(x){return Object.assign(x,{due_bucket:followUpBucket(x,today)});}),activities:includeActivities===false?[]:records_('Activities'),today:today};
+}
+function getLeadActivities(leadId){
+ authorize_();leadId=textValue(leadId,100);
+ return locked_(function(){if(!records_('CRM').some(function(x){return x.id===leadId;}))throw new Error('Choose an existing CRM business.');return records_('Activities').filter(function(x){return x.lead_id===leadId;});},true);
 }
 function saveLead(record){
  authorize_();var clean=validateLead(record);var token=textValue(record&&record.request_id,100);

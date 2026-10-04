@@ -61,3 +61,11 @@ Setup: docs/apify-setup.md covers token/key entry in Script Properties, private 
 - A deployment credential was inadvertently included in a form verification response. It was revoked and replaced before workflow activation. Subsequent verification reads saved secret names only.
 - GitHub deployment for commit 93b55ac succeeded and updated the same existing app to version 3. The live page confirmed free Census lookup and recognized the configured Apify token.
 - A five-candidate, one-industry test around the public Boulder library returned five businesses with public phones. Repeating it reused saved businesses with zero new acquisition requests and a zero charge ceiling. The initial ceiling was $0.75; actual billing and phone accuracy are not claimed verified. The pilot's one daily actor allowance was consumed by this test.
+
+## Startup performance — 2026-10-03
+
+- Authenticated initial CRM state now travels in the HTML response: zero startup google.script.run requests instead of two sequential calls. Activity history is loaded for the selected business only.
+- Startup opens the bound Sheet once, reads three tables once each (previously eight full table reads across four tables), takes one lock and avoids flushing a read-only request. Headers remain validated. No Sheet records are cached persistently in the browser.
+- My CRM shows its existing snapshot immediately while refreshing. Logging an activity inserts the server-confirmed event into history without reloading every CRM record and activity.
+- Embedded JSON escapes HTML/script delimiters and preserves literal replacement sequences. Authorization happens before private data access, and concurrent-save/version protections remain intact.
+- Verification: 52 automated tests pass. Fictional local browser checks passed for startup, saving a business, recording a call, reloading, and fetching the saved history on reopening. These checks made no paid provider requests. Google hosting latency remains variable; no precise live speedup percentage is claimed.
