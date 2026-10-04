@@ -274,7 +274,7 @@ test('startup opens its Sheet once, reads each required table once and never flu
  s.sheets.CRM.rows[0][0]='changed';assert.throws(()=>s.c.getInitialState(),/headers/i);
 });
 test('page embeds private startup only after authorization and preserves literal dollar sequences',()=>{
- const s=services();s.props.PRIVACY_URL='https://example.com/$&';let content='';s.c.HtmlService={createHtmlOutputFromFile:()=>({getContent:()=>'<body><!-- INITIAL_STATE --></body>'}),createHtmlOutput:html=>{content=html;return {setTitle(){return this;},addMetaTag(){return this;}};}};
- s.c.doGet();const serialized=content.match(/var fieldbookInitialState=(.*?);<\/script>/)[1];assert.equal(JSON.parse(serialized).boot.privacyUrl,'https://example.com/$&');assert.ok(!content.includes('<!-- INITIAL_STATE -->'));
+ const s=services();s.props.PRIVACY_URL='https://example.com/$&';let content='';s.c.HtmlService={createHtmlOutputFromFile:()=>({getContent:()=>'<script>var fieldbookInitialState="__FIELDBOOK_INITIAL_STATE__";</script>'}),createHtmlOutput:html=>{content=html;return {setTitle(){return this;},addMetaTag(){return this;}};}};
+ s.c.doGet();const serialized=content.match(/var fieldbookInitialState=(.*?);<\/script>/)[1];assert.equal(JSON.parse(serialized).boot.privacyUrl,'https://example.com/$&');assert.ok(!content.includes('__FIELDBOOK_INITIAL_STATE__'));
  const denied=services('intruder@example.com');denied.c.HtmlService=s.c.HtmlService;assert.throws(()=>denied.c.doGet(),/denied/i);
 });

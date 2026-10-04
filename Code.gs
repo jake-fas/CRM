@@ -71,7 +71,7 @@ function setup_(){
 }
 function doGet(){
  var initial=getInitialState();
- var html=HtmlService.createHtmlOutputFromFile('Index').getContent().replace('<!-- INITIAL_STATE -->',function(){return '<script>var fieldbookInitialState='+initialJSON_(initial)+';</script>';});
+ var html=HtmlService.createHtmlOutputFromFile('Index').getContent().replace('"__FIELDBOOK_INITIAL_STATE__"',function(){return initialJSON_(initial);});
  return HtmlService.createHtmlOutput(html).setTitle('Fieldbook — Sales CRM').addMetaTag('viewport','width=device-width, initial-scale=1');
 }
 function initialJSON_(value){return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g,function(c){return '\\u'+c.charCodeAt(0).toString(16).padStart(4,'0');});}
