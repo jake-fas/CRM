@@ -275,6 +275,6 @@ test('startup opens its Sheet once, reads each required table once and never flu
 });
 test('page embeds private startup only after authorization and preserves literal dollar sequences',()=>{
  const s=services();s.props.PRIVACY_URL='https://example.com/$&';let content='';s.c.HtmlService={createHtmlOutputFromFile:()=>({getContent:()=>'<body><!-- INITIAL_STATE --></body>'}),createHtmlOutput:html=>{content=html;return {setTitle(){return this;},addMetaTag(){return this;}};}};
- s.c.doGet();const serialized=content.match(/type="application\/json">(.*?)<\/script>/)[1];assert.equal(JSON.parse(serialized).boot.privacyUrl,'https://example.com/$&');assert.ok(!content.includes('<!-- INITIAL_STATE -->'));
+ s.c.doGet();const serialized=content.match(/var fieldbookInitialState=(.*?);<\/script>/)[1];assert.equal(JSON.parse(serialized).boot.privacyUrl,'https://example.com/$&');assert.ok(!content.includes('<!-- INITIAL_STATE -->'));
  const denied=services('intruder@example.com');denied.c.HtmlService=s.c.HtmlService;assert.throws(()=>denied.c.doGet(),/denied/i);
 });
