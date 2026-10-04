@@ -1,6 +1,6 @@
 # Fieldbook CRM
 
-Apps Script + Google Sheets is the selected architecture, developed locally and versioned in GitHub. **Apify is the default discovery provider**, with a separately licensed **Overture Places catalog as backup**. Minimal Apify business facts are retained at the user's request and labeled rights-unverified; using a scraper does not establish underlying storage permission. Google Places API remains an optional temporary preview. Manager contacts come from the rep's own work. CRM, ordered industries, exclusions and follow-ups work on desktop and phone; no native app or background reminder notifications.
+Apps Script + Google Sheets is the selected architecture, developed locally and versioned in GitHub. **Apify is the default discovery provider**, with a separately licensed **Overture Places catalog as backup**. Apify results are retained automatically at the user's request and labeled rights-unverified; using a scraper does not establish underlying storage permission. Google Places API remains an optional temporary preview. Manager contacts come from the rep's own work. CRM, ordered industries, exclusions and follow-ups work on desktop and phone; no native app or background reminder notifications.
 
 Start with [complete Apify/Google setup](docs/apify-setup.md), [GitHub deployment setup](docs/github-deployment.md), and [free Overture catalog setup](docs/retained-catalog.md). The new Apify setup supersedes earlier provider recommendations; [research and Boulder measurements](docs/long-term-data-research.md) remain background evidence.
 
@@ -8,7 +8,7 @@ Start with [complete Apify/Google setup](docs/apify-setup.md), [GitHub deploymen
 
 - Enter a starting address and request 1–60 raw candidates, default 50.
 - Include industries and drag them into priority order. Arrow controls also work on phones and keyboards. Save the order for the next session.
-- See public branch phones, websites, address, opening hours when available, and Maps links. Calls use `tel:` links in the live app.
+- See public branch phones, websites, address, opening hours when available, and Maps links. Call from a personal phone, then use Mark called to record the outcome.
 - Import a CSV of existing customers/exclusions. Current-customer, archived, and do-not-contact CRM records also exclude matching locations automatically.
 - Add a business record, contact/role/phone, competitor, next plan, status, and follow-up date.
 - Log calls, OSVs, card drops, appointments, decision-maker meetings, not-interested outcomes, and notes with dates.
@@ -55,7 +55,13 @@ Source: https://developers.google.com/maps/billing-and-pricing/pricing
 
 ## Storage and exclusions
 
-Apify output is stored separately in ApifyBusinesses: name, address, public phone and minimal ranking/provenance metadata. The app never labels those Google-sourced fields as openly licensed. Its 30-day freshness threshold controls reuse; it does not delete old rows. Source refreshes preserve independent CRM records. See the setup guide for exact retention, recovery and cost behavior.
+Apify output is saved automatically, without a separate save action. ApifyBusinesses holds normalized branch facts; ApifyPulls retains every acquired dataset item as replay-safe JSON chunks, including candidates excluded from discovery. Source refreshes preserve independent CRM contacts and history. The app never labels Google-sourced fields as openly licensed. Its 30-day freshness threshold controls reuse, not deletion. See the setup guide for retention, recovery and cost behavior.
+
+The CRM uses **Mark called** for calls made from a personal phone. Choose the outcome, add an optional note, and save. Follow-up defaults are editable at the top of My CRM: 3 days after the call, with an optional second reminder at 7 days. Both dates start from the original call date. Individual businesses and selected lists can override the defaults. Reminders appear in the app and can be marked done; no email or push notification service is enabled.
+
+Discovery includes 82 grouped industry options with search, Include all, Clear all, and drag/arrow priority controls. The optional business-details lookup searches saved data first using a phone, address, or business name. An explicit Apify lookup can collect up to three candidates with a $0.10 run ceiling, sharing the existing daily allowance. Typing does not start a paid request. Review matches before applying them; existing CRM contacts are preserved unless you explicitly replace details.
+
+Reminders, ApifyPulls, and WorkflowRequests tabs are created automatically when needed. Existing users do not need to rerun setup or add new keys.
 
 Live Google result names, addresses, phones, hours, websites and responses are not persisted. Google preview creates a blank CRM form linked by place ID; typing a Google field into that form is still copying restricted data. Overture catalog results can prefill business name, address and branch phone because they come from a separately licensed retained source. Source IDs use `overture:` namespaces and link to catalog provenance. Independently obtained CRM facts and activities are retained. Retention rights do not certify data accuracy.
 
@@ -83,7 +89,7 @@ The browser checks exercise 1365px desktop and 390px phone-sized layouts, indust
 - Verify allowed/denied Google accounts and scopes in the actual deployment.
 - Enter your own starting address and priorities; audit location/phone/hours accuracy.
 - Check the actual request counts and billable SKU in Cloud Console.
-- Confirm no provider payloads or secrets appear in Sheet cells, browser storage, or logs.
+- Confirm secrets never appear in Sheet cells, browser storage, or logs; acquired Apify payloads belong only in the private Sheet archive.
 - Test CRM save/reload, date strings, formula-looking text, concurrent sessions, activity retries, and archive exclusions in the actual Google Sheet.
 - Open `/exec` in iPhone Safari: reorder by touch, call a real business, open Maps, log an OSV, and check due follow-ups. Add the website to Home Screen if desired.
 - Confirm both public policy URLs work without signing in.

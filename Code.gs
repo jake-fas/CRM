@@ -1,6 +1,9 @@
 var TABLES_ = {
  CRM:['id','place_id','business_name','address','phone','contact_name','contact_role','competitor','status','next_plan','follow_up','created_at','updated_at','request_id'],
  Activities:['id','lead_id','type','date','notes','created_at','request_id'],
+ Reminders:['id','lead_id','due_date','status','created_at','request_id'],
+ WorkflowRequests:['id','fingerprint','lead_id','activity_id','completed_at'],
+ ApifyPulls:['id','run_id','item_index','part','json','retrieved_at'],
  Exclusions:['place_id','name','address','reason'],
  Catalog:['id','name','address','phone','website','latitude','longitude','industry','zip','source','release','source_dataset','license','retrieved_at','confidence','operating_status'],
  ApifyBusinesses:['id','name','address','phone','latitude','longitude','industry','zip','source','license','retrieved_at','phone_source','phone_observed_at','operating_status']
@@ -86,20 +89,21 @@ function getInitialState(){var props=authorize_();return locked_(function(){retu
 function today_(){return Utilities.formatDate(new Date(),'America/Denver','yyyy-MM-dd');}
 function preferences_(){
  var raw=PropertiesService.getScriptProperties().getProperty('INDUSTRY_PREFERENCES');
- if(raw){try{return JSON.parse(raw);}catch(e){throw new Error('Saved industry settings are invalid. Ask the builder to reset them.');}}
- return INDUSTRIES.map(function(x,i){return {id:x.id,label:x.label,included:i<2};});
+ if(raw){try{var saved=JSON.parse(raw);if(!Array.isArray(saved))throw new Error('Invalid priorities');var seen={};var merged=saved.map(function(x){var current=INDUSTRIES.find(function(y){return y.id===x.id;});if(!current||seen[x.id])return null;seen[x.id]=true;return {id:current.id,label:current.label,group:current.group,included:x.included===true};}).filter(Boolean);INDUSTRIES.forEach(function(x){if(!seen[x.id])merged.push({id:x.id,label:x.label,group:x.group,included:false});});return merged;}catch(e){throw new Error('Saved industry settings are invalid. Ask the builder to reset them.');}}
+ return INDUSTRIES.map(function(x,i){return {id:x.id,label:x.label,group:x.group,included:i<2};});
 }
 function getBootstrap(){
  var props=authorize_();return locked_(function(){return bootstrapSnapshot_(props);},true);
 }
 function bootstrapSnapshot_(props){
  var active=props.getProperty('APIFY_SEARCH');active=active?JSON.parse(active):null;
- return {industries:preferences_(),statuses:CRM_STATUSES,activityTypes:ACTIVITY_TYPES,today:today_(),configured:!!configuredProperty_(props,'GOOGLE_MAPS_API_KEY')&&policiesConfigured_(props),apifyConfigured:!!configuredProperty_(props,'APIFY_TOKEN'),pendingApifyJob:active&&['running','advance'].indexOf(active.stage)>=0?active.id:'',privacyUrl:props.getProperty('PRIVACY_URL')||'',termsUrl:props.getProperty('TERMS_URL')||'',exclusionCount:countRows_('Exclusions',4),catalogCount:countRows_('Catalog',1),demo:false};
+ var lookup=props.getProperty('APIFY_LOOKUP');lookup=lookup?JSON.parse(lookup):null;
+ return {industries:preferences_(),followUpSettings:followUpSettings_(),pendingCallWorkflows:pendingCallWorkflows_(),statuses:CRM_STATUSES,activityTypes:ACTIVITY_TYPES,today:today_(),configured:!!configuredProperty_(props,'GOOGLE_MAPS_API_KEY')&&policiesConfigured_(props),apifyConfigured:!!configuredProperty_(props,'APIFY_TOKEN'),pendingBusinessLookup:lookup&&lookup.stage==='running'?{id:lookup.id,query:lookup.query}:null,pendingApifyJob:active&&['running','advance'].indexOf(active.stage)>=0?active.id:'',privacyUrl:props.getProperty('PRIVACY_URL')||'',termsUrl:props.getProperty('TERMS_URL')||'',exclusionCount:countRows_('Exclusions',4),catalogCount:countRows_('Catalog',1),demo:false};
 }
 function policiesConfigured_(props){return /^https:\/\//.test(props.getProperty('PRIVACY_URL')||'')&&/^https:\/\//.test(props.getProperty('TERMS_URL')||'');}
 function saveIndustryPreferences(order){
  authorize_();if(!Array.isArray(order)||order.length!==INDUSTRIES.length)throw new Error('Keep every industry in the priority list.');
- var seen={};var clean=order.map(function(x){var industry=INDUSTRIES.find(function(y){return y.id===x.id;});if(!industry||seen[x.id]||typeof x.included!=='boolean')throw new Error('Invalid industry priorities.');seen[x.id]=true;return {id:x.id,label:industry.label,included:x.included};});
+ var seen={};var clean=order.map(function(x){var industry=INDUSTRIES.find(function(y){return y.id===x.id;});if(!industry||seen[x.id]||typeof x.included!=='boolean')throw new Error('Invalid industry priorities.');seen[x.id]=true;return {id:x.id,label:industry.label,group:industry.group,included:x.included};});
  if(!clean.some(function(x){return x.included;}))throw new Error('Include at least one industry.');
  locked_(function(){PropertiesService.getScriptProperties().setProperty('INDUSTRY_PREFERENCES',JSON.stringify(clean));});return clean;
 }
@@ -139,7 +143,7 @@ function importExclusions(csv){
 function getCRM(includeActivities){
  authorize_();return locked_(function(){return crmSnapshot_(includeActivities);},true);
 }
-function crmSnapshot_(includeActivities){var today=today_();return {leads:records_('CRM').map(function(x){return Object.assign(x,{due_bucket:followUpBucket(x,today)});}),activities:includeActivities===false?[]:records_('Activities'),today:today};
+function crmSnapshot_(includeActivities){var today=today_();return {leads:records_('CRM').map(function(x){return Object.assign(x,{due_bucket:followUpBucket(x,today)});}),reminders:records_('Reminders').map(function(x){return reminderView_(x,today);}),activities:includeActivities===false?[]:records_('Activities'),today:today};
 }
 function getLeadActivities(leadId){
  authorize_();leadId=textValue(leadId,100);
@@ -153,11 +157,13 @@ function saveLead(record){
    if(!clean.id&&token){var repeated=rows.find(function(x){return x.request_id===token;});if(repeated)return Object.assign({},repeated,{due_bucket:followUpBucket(repeated,today_())});}
    if(clean.place_id&&rows.some(function(x){return x.place_id===clean.place_id&&x.id!==clean.id;}))throw new Error('This location already has a CRM record. Refresh My CRM and open the existing business.');
    var previous=index>=0?rows[index]:null;
+   if(previous){assertNoPendingWorkflow_(previous.id);if(BLOCKED_STATUSES.indexOf(clean.status)<0&&clean.follow_up!==previous.follow_up&&records_('Reminders').some(function(x){return x.lead_id===previous.id&&x.status==='pending';}))throw new Error('Use Follow-ups to change scheduled reminders.');}
    if(previous&&textValue(record.expected_updated_at,100)!==previous.updated_at)throw new Error('This business changed since you opened it. Close the editor, refresh My CRM, and reopen it before saving. Your draft is still in the editor.');
    var now=new Date().getTime(),previousTime=previous?Date.parse(previous.updated_at):NaN;
    var saved=Object.assign(clean,{id:previous?previous.id:Utilities.getUuid(),created_at:previous?previous.created_at:new Date(now).toISOString(),updated_at:new Date(Number.isFinite(previousTime)?Math.max(now,previousTime+1):now).toISOString(),request_id:previous?previous.request_id:token});
    if(rows.length+(index<0?1:0)>4000)throw new Error('Pilot capacity reached. Ask the builder to expand the storage design.');
    var sheet=sheet_('CRM');writeRecordAt_(sheet,'CRM',index>=0?entries[index].row:sheet.getLastRow()+1,saved);
+   if(BLOCKED_STATUSES.indexOf(saved.status)>=0)cancelLeadReminders_(saved.id);
    return Object.assign({},saved,{due_bucket:followUpBucket(saved,today_())});
  });
 }
@@ -169,5 +175,112 @@ function logActivity(activity){
    if(!records_('CRM').some(function(x){return x.id===leadId;}))throw new Error('Choose an existing CRM business.');
    var existing=records_('Activities').find(function(x){return x.request_id===token;});if(existing){if(existing.lead_id!==leadId)throw new Error('Activity submission ID conflict.');return existing;}
    var x={id:Utilities.getUuid(),lead_id:leadId,type:type,date:date,notes:notes,created_at:new Date().toISOString(),request_id:token};appendRecord_('Activities',x);return x;
+ });
+}
+// Reminder defaults are stored separately so existing CRM Sheet headers remain stable.
+function validateFollowUpSettings_(input){
+ input=input||{};var primary=Number(input.primaryDays),secondary=Number(input.secondaryDays);
+ if(!Number.isInteger(primary)||primary<1||primary>366||!Number.isInteger(secondary)||secondary<1||secondary>366||typeof input.secondaryEnabled!=='boolean')throw new Error('Choose whole-day follow-ups between 1 and 366 days.');
+ if(input.secondaryEnabled&&secondary<=primary)throw new Error('The second follow-up must be later than the first.');
+ return {primaryDays:primary,secondaryDays:secondary,secondaryEnabled:input.secondaryEnabled};
+}
+function followUpSettings_(){var raw=PropertiesService.getScriptProperties().getProperty('FOLLOW_UP_SETTINGS');return raw?validateFollowUpSettings_(JSON.parse(raw)):{primaryDays:3,secondaryDays:7,secondaryEnabled:false};}
+function getFollowUpSettings(){authorize_();return locked_(followUpSettings_,true);}
+function saveFollowUpSettings(input){authorize_();var clean=validateFollowUpSettings_(input);return locked_(function(){PropertiesService.getScriptProperties().setProperty('FOLLOW_UP_SETTINGS',JSON.stringify(clean));return clean;});}
+function reminderView_(record,today){return Object.assign({},record,{due_bucket:record.status!=='pending'?'none':record.due_date<today?'overdue':record.due_date===today?'today':'upcoming'});}
+function leadReminders_(id){var today=today_();return records_('Reminders').filter(function(x){return x.lead_id===id;}).map(function(x){return reminderView_(x,today);});}
+function cancelLeadReminders_(id){recordEntries_('Reminders').forEach(function(x){if(x.record.lead_id===id&&x.record.status==='pending'){x.record.status='cancelled';writeRecordAt_(sheet_('Reminders'),'Reminders',x.row,x.record);}});}
+function nextLeadVersion_(lead){return new Date(Math.max(Date.now(),Date.parse(lead.updated_at)+1||0)).toISOString();}
+function addCalendarDays_(date,days){var value=new Date(date+'T00:00:00Z');value.setUTCDate(value.getUTCDate()+days);return value.toISOString().slice(0,10);}
+function upsertWorkflowRecord_(table,record){var entry=recordEntries_(table).find(function(x){return x.record.id===record.id;});if(!entry)appendRecord_(table,record);}
+function canonicalWorkflowJSON_(value){if(Array.isArray(value))return value.map(canonicalWorkflowJSON_);if(value&&typeof value==='object'){var out={};Object.keys(value).sort().forEach(function(key){out[key]=canonicalWorkflowJSON_(value[key]);});return out;}return value;}
+function workflowFingerprint_(input){return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,JSON.stringify(canonicalWorkflowJSON_(input)),Utilities.Charset.UTF_8).map(function(b){return ('0'+(b&255).toString(16)).slice(-2);}).join('');}
+function assertNoPendingWorkflow_(leadId,exceptToken){
+ var properties=PropertiesService.getScriptProperties().getProperties(),prefix='FOLLOW_UP_REQUEST_',exceptKey=exceptToken?prefix+encodeURIComponent(exceptToken):'';
+ Object.keys(properties).forEach(function(key){if(key.indexOf(prefix)!==0||key===exceptKey)return;var journal;try{journal=JSON.parse(properties[key]);}catch(e){return;}if(journal&&journal.leadId===leadId&&typeof journal.fingerprint==='string'&&Number.isInteger(journal.parts)&&journal.parts>0&&!journal.complete)throw new Error('This business has an unfinished call or follow-up save. Retry its pending submission before changing the business.');});
+}
+function clearWorkflowJournal_(props,key,parts){for(var i=0;i<parts;i++)props.deleteProperty(key+'_'+i);props.deleteProperty(key);}
+function workflowResult_(journal){var lead=records_('CRM').find(function(x){return x.id===journal.leadId;});return {lead:Object.assign({},lead,{due_bucket:followUpBucket(lead,today_())}),activity:journal.activityId?records_('Activities').find(function(x){return x.id===journal.activityId;}):null,reminders:leadReminders_(journal.leadId),followUpSettings:followUpSettings_()};}
+function completeCall(input){authorize_();return locked_(function(){return followUpWorkflow_(input,true);});}
+function scheduleFollowUps(input){authorize_();return locked_(function(){return followUpWorkflow_(input,false);});}
+function followUpWorkflow_(input,isCall){
+ input=input||{};
+ var token=textValue(input.request_id,100),leadId=textValue(input.lead_id,100),fingerprint=workflowFingerprint_({kind:isCall?'call':'schedule',input:input});
+ if(!token||!leadId)throw new Error('Choose a business and include a submission ID.');
+ var props=PropertiesService.getScriptProperties(),key='FOLLOW_UP_REQUEST_'+encodeURIComponent(token),raw=props.getProperty(key),journal=raw?JSON.parse(raw):null,payload;
+ var completed=records_('WorkflowRequests').find(function(x){return x.id===token;});
+ if(completed){if(completed.fingerprint!==fingerprint||completed.lead_id!==leadId)throw new Error('Call submission ID conflict.');if(journal){SpreadsheetApp.flush();clearWorkflowJournal_(props,key,journal.parts);}return workflowResult_({leadId:completed.lead_id,activityId:completed.activity_id});}
+ if(journal)assertNoPendingWorkflow_(leadId,token);else try{assertNoPendingWorkflow_(leadId,token);}catch(e){throw new Error('[PREWRITE_REJECTED] '+e.message);}
+ if(journal){
+  if(journal.fingerprint!==fingerprint||journal.leadId!==leadId)throw new Error('Call submission ID conflict.');
+  if(journal.complete)return workflowResult_(journal);
+  var chunks=[];for(var p=0;p<journal.parts;p++)chunks.push(props.getProperty(key+'_'+p)||'');payload=JSON.parse(chunks.join(''));
+ }else{
+  try{
+  var entry=recordEntries_('CRM').find(function(x){return x.record.id===leadId;});if(!entry)throw new Error('Choose an existing CRM business.');
+  var previous=entry.record;if(textValue(input.expected_updated_at,100)!==previous.updated_at)throw new Error('This business changed since you opened it. Refresh My CRM before saving.');
+  var mode=input.followUpMode||'default',settings=mode==='custom'?validateFollowUpSettings_(input):followUpSettings_();if(['default','custom','none'].indexOf(mode)<0)throw new Error('Choose default, custom, or no follow-up.');
+  var date=dateValue(input.date)||today_(),notes=textValue(input.notes,5000),outcome=textValue(input.outcome,50)||'unchanged';
+  var outcomes={unchanged:{status:'unchanged',label:'Called'},attempting_contact:{status:'attempting_contact',label:'Attempting contact'},no_answer:{status:'attempting_contact',label:'No answer'},voicemail:{status:'attempting_contact',label:'Voicemail'},gatekeeper:{status:'attempting_contact',label:'Gatekeeper'},connected:{status:'unchanged',label:'Connected'},wrong_number:{status:'unchanged',label:'Wrong number'},appointment:{status:'appointment',label:'Appointment'},not_interested:{status:'not_interested',label:'Not interested'},current_customer:{status:'current_customer',label:'Current customer'},do_not_contact:{status:'do_not_contact',label:'Do not contact'}};
+  if(isCall&&!Object.prototype.hasOwnProperty.call(outcomes,outcome))throw new Error('Choose a valid call outcome.');
+  var result=isCall?outcomes[outcome]:null;
+  var saved=Object.assign({},previous);if(result&&result.status!=='unchanged')saved.status=result.status;
+  if(result)notes=result.label+(notes?' \u2014 '+notes:'');
+  ['next_plan','contact_name','contact_role'].forEach(function(field){if(Object.prototype.hasOwnProperty.call(input,field))saved[field]=textValue(input[field],field==='next_plan'?3000:200);});
+  var now=new Date().toISOString(),reminders=[],active=records_('Reminders').filter(function(x){return x.lead_id===leadId&&x.status==='pending';});
+  if(mode!=='none'&&BLOCKED_STATUSES.indexOf(saved.status)<0){
+   var offsets=[settings.primaryDays];if(settings.secondaryEnabled)offsets.push(settings.secondaryDays);
+   reminders=offsets.map(function(days){return {id:Utilities.getUuid(),lead_id:leadId,due_date:addCalendarDays_(date,days),status:'pending',created_at:now,request_id:token};});
+  }
+  saved.follow_up=reminders.length?reminders[0].due_date:'';saved.updated_at=nextLeadVersion_(previous);
+  var activity=isCall?{id:Utilities.getUuid(),lead_id:leadId,type:'call',date:date,notes:notes,created_at:now,request_id:token}:null;
+  if(isCall&&records_('Activities').some(function(x){return x.request_id===token;}))throw new Error('Call submission ID conflict.');
+  payload={requestInput:JSON.parse(JSON.stringify(input)),isCall:isCall,lead:saved,previousVersion:previous.updated_at,activity:activity,reminders:reminders,cancelStatus:mode==='none'||BLOCKED_STATUSES.indexOf(saved.status)>=0?'cancelled':'superseded',cancelIds:active.map(function(x){return x.id;})};
+  }catch(e){throw new Error('[PREWRITE_REJECTED] '+e.message);}
+  var data=JSON.stringify(payload),parts=Math.ceil(data.length/1500);for(var i=0;i<parts;i++)props.setProperty(key+'_'+i,data.slice(i*1500,(i+1)*1500));
+  journal={requestId:token,isCall:isCall,fingerprint:fingerprint,leadId:leadId,activityId:activity?activity.id:'',parts:parts,complete:false};props.setProperty(key,JSON.stringify(journal));
+ }
+ // Resume writes by their stable IDs. Old reminders are only retired after the
+ // outcome, call activity and all replacement reminders have reached the Sheet.
+ var current=recordEntries_('CRM').find(function(x){return x.record.id===leadId;});if(!current)throw new Error('CRM record no longer exists.');
+ if(current.record.updated_at===payload.previousVersion)writeRecordAt_(sheet_('CRM'),'CRM',current.row,payload.lead);
+ else if(current.record.updated_at!==payload.lead.updated_at)throw new Error('This business changed while a call save was interrupted. Ask the builder to recover the pending submission.');
+ if(payload.activity)upsertWorkflowRecord_('Activities',payload.activity);
+ payload.reminders.forEach(function(x){upsertWorkflowRecord_('Reminders',x);});
+ recordEntries_('Reminders').forEach(function(x){if(payload.cancelIds.indexOf(x.record.id)>=0&&x.record.status==='pending'){x.record.status=payload.cancelStatus||'superseded';writeRecordAt_(sheet_('Reminders'),'Reminders',x.row,x.record);}});
+ upsertWorkflowRecord_('WorkflowRequests',{id:token,fingerprint:fingerprint,lead_id:leadId,activity_id:journal.activityId,completed_at:new Date().toISOString()});
+ SpreadsheetApp.flush();
+ clearWorkflowJournal_(props,key,journal.parts);
+ return workflowResult_(journal);
+}
+function completeReminder(id){
+ authorize_();id=textValue(id,100);return locked_(function(){
+  var entry=recordEntries_('Reminders').find(function(x){return x.record.id===id;});if(!entry)throw new Error('Reminder no longer exists. Refresh My CRM.');
+  var leadEntry=recordEntries_('CRM').find(function(x){return x.record.id===entry.record.lead_id;});if(!leadEntry)throw new Error('CRM record no longer exists.');
+  assertNoPendingWorkflow_(leadEntry.record.id);
+  var reminder=entry.record;if(reminder.status==='pending'){reminder.status='completed';writeRecordAt_(sheet_('Reminders'),'Reminders',entry.row,reminder);}
+  var lead=leadEntry.record,pending=records_('Reminders').filter(function(x){return x.lead_id===lead.id&&x.status==='pending';}).map(function(x){return x.due_date;}).sort();
+  var next=BLOCKED_STATUSES.indexOf(lead.status)>=0?'':pending[0]||'';
+  if(lead.follow_up!==next){lead.follow_up=next;lead.updated_at=nextLeadVersion_(lead);writeRecordAt_(sheet_('CRM'),'CRM',leadEntry.row,lead);}
+  return {reminder:reminderView_(reminder,today_()),lead:Object.assign({},lead,{due_bucket:followUpBucket(lead,today_())}),reminders:leadReminders_(lead.id)};
+ });
+}
+
+function pendingCallWorkflowEntries_(){
+ var props=PropertiesService.getScriptProperties(),properties=props.getProperties(),prefix='FOLLOW_UP_REQUEST_',entries=[];
+ Object.keys(properties).forEach(function(key){if(key.indexOf(prefix)!==0)return;var journal;try{journal=JSON.parse(properties[key]);}catch(e){return;}if(journal&&typeof journal.leadId==='string'&&typeof journal.fingerprint==='string'&&Number.isInteger(journal.parts)&&journal.parts>0&&!journal.complete)entries.push({key:key,journal:journal});});return entries;
+}
+function pendingCallWorkflows_(leadId){return pendingCallWorkflowEntries_().filter(function(x){return !leadId||x.journal.leadId===leadId;}).map(function(x){return {request_id:x.journal.requestId||decodeURIComponent(x.key.slice('FOLLOW_UP_REQUEST_'.length)),lead_id:x.journal.leadId,isCall:x.journal.isCall===true};});}
+function getPendingCallWorkflows(leadId){authorize_();leadId=textValue(leadId,100);return locked_(function(){return pendingCallWorkflows_(leadId);},true);}
+function resumeFollowUpWorkflow(input){
+ authorize_();input=input||{};var token=textValue(input.request_id,100),leadId=textValue(input.lead_id,100);if(!token||!leadId)throw new Error('Choose a pending submission and business.');
+ return locked_(function(){
+  var completed=records_('WorkflowRequests').find(function(x){return x.id===token;});
+  if(completed){if(completed.lead_id!==leadId)throw new Error('Submission business conflict.');var receiptProps=PropertiesService.getScriptProperties(),receiptKey='FOLLOW_UP_REQUEST_'+encodeURIComponent(token),residual=receiptProps.getProperty(receiptKey);if(residual){SpreadsheetApp.flush();clearWorkflowJournal_(receiptProps,receiptKey,JSON.parse(residual).parts);}return workflowResult_({leadId:completed.lead_id,activityId:completed.activity_id});}
+  var key='FOLLOW_UP_REQUEST_'+encodeURIComponent(token),entry=pendingCallWorkflowEntries_().find(function(x){return x.key===key;});
+  if(!entry)throw new Error('Pending submission no longer exists. Refresh My CRM.');if(entry.journal.leadId!==leadId)throw new Error('Submission business conflict.');
+  var props=PropertiesService.getScriptProperties(),chunks=[];for(var i=0;i<entry.journal.parts;i++)chunks.push(props.getProperty(key+'_'+i)||'');var payload=JSON.parse(chunks.join(''));
+  if(!payload.requestInput)throw new Error('Pending submission predates automatic recovery. Ask the builder to recover it.');
+  return followUpWorkflow_(payload.requestInput,payload.isCall===true);
  });
 }

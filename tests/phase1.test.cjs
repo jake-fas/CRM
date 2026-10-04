@@ -73,8 +73,8 @@ test('industry inclusion and priority fill raw cap without topping up after excl
 function services(email='rep@example.com') {
  const sheets={},props={ALLOWED_EMAILS:'rep@example.com',SPREADSHEET_ID:'sheet',GOOGLE_MAPS_API_KEY:'secret',PRIVACY_URL:'https://example.com/privacy',TERMS_URL:'https://example.com/terms'};let locked=false,fetchCount=0,flushedUnderLock=false;
  const spreadsheet={getSheetByName:n=>sheets[n]||null,insertSheet:n=>sheets[n]={rows:[],maxRows:1000,maxColumns:26,getMaxRows(){return this.maxRows;},getMaxColumns(){return this.maxColumns;},insertRowsAfter(after,count){this.maxRows+=count;},insertColumnsAfter(after,count){this.maxColumns+=count;},getLastColumn(){return Math.max(0,...this.rows.map(r=>r.length));},getLastRow(){return this.rows.length;},getDataRange(){return {getValues:()=>this.rows.map(r=>r.slice())};},getRange(r,col,nr,nc){const s=this;if(r+nr-1>s.maxRows||col+nc-1>s.maxColumns)throw new Error('Range exceeds grid limits');return {getValues(){return Array.from({length:nr},(_,i)=>Array.from({length:nc},(_,j)=>s.rows[r-1+i]?.[col-1+j]??''));},setNumberFormat(){return this;},setValues(values){values.forEach((v,i)=>{s.rows[r-1+i]=v.map(x=>typeof x==='string'&&x[0]==="'"?x.slice(1):x);});return this;},clearContent(){for(let i=r-1;i<r-1+nr;i++)s.rows[i]=Array(nc).fill('');return this;}};},setFrozenRows(){}}};
- const propertyStore={getProperty:k=>props[k]??null,setProperty:(k,v)=>{props[k]=String(v);},getProperties:()=>({...props})};
- const extra={PropertiesService:{getScriptProperties:()=>propertyStore},Session:{getActiveUser:()=>({getEmail:()=>email})},SpreadsheetApp:{openById:()=>spreadsheet,flush:()=>{flushedUnderLock=locked;}},Utilities:{getUuid:()=>require('node:crypto').randomUUID(),formatDate:()=> '2026-10-02'},LockService:{getScriptLock:()=>({tryLock:()=>{if(locked)return false;locked=true;return true;},releaseLock:()=>{locked=false;}})},UrlFetchApp:{fetch:url=>{fetchCount++;return {getResponseCode:()=>200,getContentText:()=>url.includes('geocoding.geo.census.gov')?JSON.stringify(censusResponse()):url.includes('geocode')?JSON.stringify({status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]}):JSON.stringify({places:[place(1)]})};}}};
+ const propertyStore={getProperty:k=>props[k]??null,setProperty:(k,v)=>{props[k]=String(v);},getProperties:()=>({...props}),deleteProperty:k=>delete props[k]};
+ const extra={PropertiesService:{getScriptProperties:()=>propertyStore},Session:{getActiveUser:()=>({getEmail:()=>email})},SpreadsheetApp:{openById:()=>spreadsheet,flush:()=>{flushedUnderLock=locked;}},Utilities:{DigestAlgorithm:{SHA_256:'sha256'},Charset:{UTF_8:'utf8'},computeDigest:(_,value)=>Array.from(require('node:crypto').createHash('sha256').update(value).digest()),getUuid:()=>require('node:crypto').randomUUID(),formatDate:()=> '2026-10-02'},LockService:{getScriptLock:()=>({tryLock:()=>{if(locked)return false;locked=true;return true;},releaseLock:()=>{locked=false;}})},UrlFetchApp:{fetch:url=>{fetchCount++;return {getResponseCode:()=>200,getContentText:()=>url.includes('geocoding.geo.census.gov')?JSON.stringify(censusResponse()):url.includes('geocode')?JSON.stringify({status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]}):JSON.stringify({places:[place(1)]})};}}};
  const c=load(['Core.gs','Provider.gs','Catalog.gs','Code.gs'],extra);
  if(fs.existsSync(path.join(root,'Apify.gs')))vm.runInContext(fs.readFileSync(path.join(root,'Apify.gs'),'utf8'),c);
  const cache={};c.CacheService={getScriptCache:()=>({get:k=>cache[k]||null,put:(k,v)=>cache[k]=v,remove:k=>delete cache[k]})};
@@ -143,7 +143,7 @@ test('Apify and Overture address searches need no Google credential or policy UR
 });
 test('editor setup entry point rejects unauthorized callers before creating properties or tables',()=>{
  const s=services('intruder@example.com');s.c.SpreadsheetApp.getActiveSpreadsheet=()=>({getId:()=> 'sheet'});const before=JSON.stringify(s.props);assert.throws(()=>s.c.setupCRM(),/denied/i);assert.equal(JSON.stringify(s.props),before);assert.equal(Object.keys(s.sheets).length,0);
- const a=services();a.c.SpreadsheetApp.getActiveSpreadsheet=()=>({getId:()=> 'sheet'});a.c.setupCRM();assert.equal(Object.keys(a.sheets).length,5);assert.equal(a.fetchCount,0);
+ const a=services();a.c.SpreadsheetApp.getActiveSpreadsheet=()=>({getId:()=> 'sheet'});a.c.setupCRM();assert.equal(Object.keys(a.sheets).length,Object.keys(a.c.TABLES_).length);assert.equal(a.fetchCount,0);
 });
 test('editor property initialization adds blank credential names and safe pilot defaults without replacing existing settings',()=>{
  const s=services();s.c.SpreadsheetApp.getActiveSpreadsheet=()=>({getId:()=> 'sheet'});delete s.props.ALLOWED_EMAILS;delete s.props.GOOGLE_MAPS_API_KEY;
@@ -297,4 +297,34 @@ test('bootstrap counts valid catalog IDs and exclusion rows with narrow reads, i
  const s=services();s.c.getBootstrap();const catalog=s.sheets.Catalog,excluded=s.sheets.Exclusions;
  catalog.rows.push(['overture:one',...Array(15).fill('')],Array(16).fill(''),['overture:two',...Array(15).fill('')]);excluded.rows.push(['','A','1 Main',''],Array(4).fill(''),['id','','','']);
  catalog.getDataRange=excluded.getDataRange=()=>{throw new Error('Full count read');};const out=s.c.getBootstrap();assert.equal(out.catalogCount,2);assert.equal(out.exclusionCount,2);
+});
+
+test('every acquired Apify item is saved automatically before exclusions or normalization reject it',()=>{
+ const s=services(),items=[apifyItem(1),{...apifyItem(2),extraField:{nested:'kept'},permanentlyClosed:true},{bad:'unmatched listing'}],t=apifyTransport(s,[items]);s.c.importExclusions('place_id,reason\nChIJfixture1,customer');
+ const pending=s.c.startApifySearch(input({count:3,industries:['restaurant']}));const out=s.c.pollApifySearch(pending.jobId);assert.equal(out.eligible.length,0);assert.equal(t.starts,1);
+ const pulls=s.c.records_('ApifyPulls');assert.equal(pulls.length,3);assert.deepEqual(pulls.map(x=>JSON.parse(x.json)),items);s.c.pollApifySearch(pending.jobId);assert.equal(s.c.records_('ApifyPulls').length,3);
+});
+test('raw Apify pulls split large cells and replay without duplicated chunks',()=>{
+ const s=services(),item={title:'Large listing',details:'x'.repeat(70000)};s.c.retainApifyItems_('run-fixture',[item]);s.c.retainApifyItems_('run-fixture',[item]);const rows=s.c.records_('ApifyPulls');assert.equal(rows.length,3);assert.ok(rows.every(x=>x.json.length<=32000));assert.deepEqual(JSON.parse(rows.sort((a,b)=>Number(a.part)-Number(b.part)).map(x=>x.json).join('')),item);
+});
+test('optional local lookup accepts phone/name/address and never sends paid requests',()=>{
+ const s=services(),lead=s.c.saveLead({business_name:'Jake Coffee',address:'123 Main St, Boulder, CO 80301',phone:'(303) 555-0100'});
+ for(const query of ['3035550100','Jake Coffee','123 Main St']){const out=s.c.lookupBusiness({query});assert.equal(out.matches[0].crmId,lead.id);assert.equal(s.fetchCount,0);}
+ assert.throws(()=>s.c.lookupBusiness({query:''}));const denied=services('intruder@example.com');assert.throws(()=>denied.c.lookupBusiness({query:'Jake Coffee'}),/denied/i);assert.equal(denied.fetchCount,0);
+});
+test('optional Apify lookup is capped, asynchronous and persists returned facts and raw pulls without creating CRM records',()=>{
+ const s=services(),t=apifyTransport(s,[[apifyItem(1)]]);const pending=s.c.startBusinessLookup({query:'Fixture 1, Boulder CO'});assert.equal(pending.pending,true);assert.equal(t.starts,1);assert.equal(s.c.startBusinessLookup({query:'Fixture 1, Boulder CO'}).jobId,pending.jobId);
+ const start=t.requests.find(x=>x.url.includes('/actors/'));assert.ok(start.url.includes('maxTotalChargeUsd=0.1'));assert.equal(JSON.parse(start.options.payload).maxCrawledPlacesPerSearch,3);
+ const out=s.c.pollBusinessLookup(pending.jobId);assert.equal(out.matches[0].name,'Fixture 1');assert.equal(s.c.records_('ApifyPulls').length,1);assert.equal(s.c.records_('ApifyBusinesses').length,1);assert.equal(s.c.records_('CRM').length,0);s.c.pollBusinessLookup(pending.jobId);assert.equal(t.starts,1);
+});
+
+test('raw pull chunks do not split Unicode surrogate pairs at Sheet cell boundaries',()=>{
+ const s=services(),item={value:'x'.repeat(31989)+'😀😀'};s.c.retainApifyItems_('unicode',[item]);const parts=s.c.records_('ApifyPulls').sort((a,b)=>Number(a.part)-Number(b.part)).map(x=>x.json);
+ assert.ok(parts.every(part=>!/[\uD800-\uDBFF]$/.test(part)&&! /^[\uDC00-\uDFFF]/.test(part)));assert.deepEqual(JSON.parse(parts.join('')),item);
+});
+
+test('including many industries keeps batch ceiling useful and never starts more than six sparse runs',()=>{
+ const s=services(),t=apifyTransport(s,Array(6).fill([]));s.props.DAILY_APIFY_RUN_LIMIT='20';const pending=s.c.startApifySearch(input({count:50,industries:Array.from(s.c.INDUSTRIES.slice(0,10),x=>x.id)}));let out=pending;
+ for(let i=0;i<8&&out.pending;i++)out=s.c.pollApifySearch(pending.jobId);assert.equal(out.pending,undefined);assert.equal(t.starts,6);assert.ok(out.costCeilingUsd<=.75);assert.ok(t.requests.filter(x=>x.url.includes('/actors/')).every(x=>x.url.includes('maxTotalChargeUsd=0.125')));
+ const single=services(),p=apifyTransport(single,[[apifyItem(1)]]);single.props.DAILY_APIFY_RUN_LIMIT='1';single.c.startApifySearch(input({industries:Array.from(single.c.INDUSTRIES,x=>x.id)}));assert.ok(p.requests.find(x=>x.url.includes('/actors/')).url.includes('maxTotalChargeUsd=0.75'));
 });
