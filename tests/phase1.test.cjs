@@ -72,7 +72,7 @@ test('industry inclusion and priority fill raw cap without topping up after excl
 });
 function services(email='rep@example.com') {
  const sheets={},props={ALLOWED_EMAILS:'rep@example.com',SPREADSHEET_ID:'sheet',GOOGLE_MAPS_API_KEY:'secret',PRIVACY_URL:'https://example.com/privacy',TERMS_URL:'https://example.com/terms'};let locked=false,fetchCount=0,flushedUnderLock=false;
- const spreadsheet={getSheetByName:n=>sheets[n]||null,insertSheet:n=>sheets[n]={rows:[],maxRows:1000,maxColumns:26,getMaxRows(){return this.maxRows;},getMaxColumns(){return this.maxColumns;},insertRowsAfter(after,count){this.maxRows+=count;},insertColumnsAfter(after,count){this.maxColumns+=count;},getLastRow(){return this.rows.length;},getDataRange(){return {getValues:()=>this.rows.map(r=>r.slice())};},getRange(r,col,nr,nc){const s=this;if(r+nr-1>s.maxRows||col+nc-1>s.maxColumns)throw new Error('Range exceeds grid limits');return {setNumberFormat(){return this;},setValues(values){values.forEach((v,i)=>{s.rows[r-1+i]=v.map(x=>typeof x==='string'&&x[0]==="'"?x.slice(1):x);});return this;},clearContent(){for(let i=r-1;i<r-1+nr;i++)s.rows[i]=Array(nc).fill('');return this;}};},setFrozenRows(){}}};
+ const spreadsheet={getSheetByName:n=>sheets[n]||null,insertSheet:n=>sheets[n]={rows:[],maxRows:1000,maxColumns:26,getMaxRows(){return this.maxRows;},getMaxColumns(){return this.maxColumns;},insertRowsAfter(after,count){this.maxRows+=count;},insertColumnsAfter(after,count){this.maxColumns+=count;},getLastColumn(){return Math.max(0,...this.rows.map(r=>r.length));},getLastRow(){return this.rows.length;},getDataRange(){return {getValues:()=>this.rows.map(r=>r.slice())};},getRange(r,col,nr,nc){const s=this;if(r+nr-1>s.maxRows||col+nc-1>s.maxColumns)throw new Error('Range exceeds grid limits');return {getValues(){return Array.from({length:nr},(_,i)=>Array.from({length:nc},(_,j)=>s.rows[r-1+i]?.[col-1+j]??''));},setNumberFormat(){return this;},setValues(values){values.forEach((v,i)=>{s.rows[r-1+i]=v.map(x=>typeof x==='string'&&x[0]==="'"?x.slice(1):x);});return this;},clearContent(){for(let i=r-1;i<r-1+nr;i++)s.rows[i]=Array(nc).fill('');return this;}};},setFrozenRows(){}}};
  const propertyStore={getProperty:k=>props[k]??null,setProperty:(k,v)=>{props[k]=String(v);},getProperties:()=>({...props})};
  const extra={PropertiesService:{getScriptProperties:()=>propertyStore},Session:{getActiveUser:()=>({getEmail:()=>email})},SpreadsheetApp:{openById:()=>spreadsheet,flush:()=>{flushedUnderLock=locked;}},Utilities:{getUuid:()=>require('node:crypto').randomUUID(),formatDate:()=> '2026-10-02'},LockService:{getScriptLock:()=>({tryLock:()=>{if(locked)return false;locked=true;return true;},releaseLock:()=>{locked=false;}})},UrlFetchApp:{fetch:url=>{fetchCount++;return {getResponseCode:()=>200,getContentText:()=>url.includes('geocoding.geo.census.gov')?JSON.stringify(censusResponse()):url.includes('geocode')?JSON.stringify({status:'OK',results:[{geometry:{location:{lat:40,lng:-105}}}]}):JSON.stringify({places:[place(1)]})};}}};
  const c=load(['Core.gs','Provider.gs','Catalog.gs','Code.gs'],extra);
@@ -267,14 +267,34 @@ test('lazy history returns only the selected business and fresh writes',()=>{
  assert.throws(()=>s.c.getLeadActivities('missing'),/existing/i);
 });
 
-test('startup opens its Sheet once, reads each required table once and never flushes read-only requests',()=>{
+test('startup opens its Sheet once, reads CRM once and uses bounded count ranges and never flushes read-only requests',()=>{
  const s=services();s.c.getInitialState();s.c.spreadsheetBinding_=undefined;let opens=0,flushes=0;const original=s.c.SpreadsheetApp.openById;s.c.SpreadsheetApp.openById=id=>{opens++;return original(id);};s.c.SpreadsheetApp.flush=()=>flushes++;
  const reads={};for(const name of ['CRM','Catalog','Exclusions']){const sheet=s.sheets[name];sheet.getDataRange=()=>{reads[name]=(reads[name]||0)+1;return {getValues:()=>sheet.rows.map(r=>r.slice())};};}
- s.c.getInitialState();assert.equal(opens,1);assert.equal(flushes,0);assert.deepEqual(reads,{CRM:1,Catalog:1,Exclusions:1});
+ s.c.getInitialState();assert.equal(opens,1);assert.equal(flushes,0);assert.deepEqual(reads,{CRM:1});
  s.sheets.CRM.rows[0][0]='changed';assert.throws(()=>s.c.getInitialState(),/headers/i);
 });
 test('page embeds private startup only after authorization and preserves literal dollar sequences',()=>{
  const s=services();s.props.PRIVACY_URL='https://example.com/$&';let content='';s.c.HtmlService={createHtmlOutputFromFile:()=>({getContent:()=>'<script>var fieldbookInitialState="__FIELDBOOK_INITIAL_STATE__";</script>'}),createHtmlOutput:html=>{content=html;return {setTitle(){return this;},addMetaTag(){return this;}};}};
  s.c.doGet();const serialized=content.match(/var fieldbookInitialState=(.*?);<\/script>/)[1];assert.equal(JSON.parse(serialized).boot.privacyUrl,'https://example.com/$&');assert.ok(!content.includes('__FIELDBOOK_INITIAL_STATE__'));
  const denied=services('intruder@example.com');denied.c.HtmlService=s.c.HtmlService;assert.throws(()=>denied.c.doGet(),/denied/i);
+});
+
+test('saving one business writes one physical row and preserves blank rows and other businesses',()=>{
+ const s=services(),a=s.c.saveLead({business_name:'A'}),b=s.c.saveLead({business_name:'B'}),sheet=s.sheets.CRM;
+ sheet.rows.splice(2,0,Array(s.c.TABLES_.CRM.length).fill(''));const before=sheet.rows.map(r=>r.slice()),writes=[],original=sheet.getRange;
+ sheet.getRange=function(r,c,nr,nc){const range=original.call(this,r,c,nr,nc),set=range.setValues;range.setValues=function(rows){writes.push({row:r,count:nr});return set.call(this,rows);};return range;};
+ const saved=s.c.saveLead({...b,phone:'303-555-0100',follow_up:'2026-10-02',expected_updated_at:b.updated_at});
+ assert.deepEqual(writes,[{row:4,count:1}]);assert.deepEqual(sheet.rows[1],before[1]);assert.deepEqual(sheet.rows[2],before[2]);assert.equal(sheet.rows[3][0],b.id);assert.equal(saved.due_bucket,'today');
+ const created=s.c.saveLead({business_name:'C',request_id:'one-create',status:'prospect',follow_up:'2026-10-01'});assert.equal(s.c.saveLead({business_name:'C',request_id:'one-create'}).due_bucket,'overdue');assert.equal(s.c.records_('CRM').length,3);assert.equal(created.due_bucket,'overdue');
+});
+test('saving reads the full CRM once; header validation stays bounded and detects extra columns',()=>{
+ const s=services(),a=s.c.saveLead({business_name:'A'}),sheet=s.sheets.CRM;let fullReads=0;const original=sheet.getDataRange;sheet.getDataRange=function(){fullReads++;return original.call(this);};
+ s.c.saveLead({...a,phone:'303-555-0101',expected_updated_at:a.updated_at});assert.equal(fullReads,1);
+ sheet.rows[0].push('unexpected');assert.throws(()=>s.c.sheet_('CRM'),/headers/i);
+});
+
+test('bootstrap counts valid catalog IDs and exclusion rows with narrow reads, including gaps',()=>{
+ const s=services();s.c.getBootstrap();const catalog=s.sheets.Catalog,excluded=s.sheets.Exclusions;
+ catalog.rows.push(['overture:one',...Array(15).fill('')],Array(16).fill(''),['overture:two',...Array(15).fill('')]);excluded.rows.push(['','A','1 Main',''],Array(4).fill(''),['id','','','']);
+ catalog.getDataRange=excluded.getDataRange=()=>{throw new Error('Full count read');};const out=s.c.getBootstrap();assert.equal(out.catalogCount,2);assert.equal(out.exclusionCount,2);
 });

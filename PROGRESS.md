@@ -69,3 +69,12 @@ Setup: docs/apify-setup.md covers token/key entry in Script Properties, private 
 - My CRM shows its existing snapshot immediately while refreshing. Logging an activity inserts the server-confirmed event into history without reloading every CRM record and activity.
 - Embedded JSON escapes HTML/script delimiters and preserves literal replacement sequences. Authorization happens before private data access, and concurrent-save/version protections remain intact.
 - Verification: 52 automated tests pass. Fictional local browser checks passed for startup, saving a business, recording a call, reloading, and fetching the saved history on reopening. These checks made no paid provider requests. Google hosting latency remains variable; no precise live speedup percentage is claimed.
+
+## Efficiency review — 2026-10-03
+
+- Independent review identified full-table header validation, whole-table CRM saves, and a redundant full CRM reload after save. Also found a correctness bug: blank Sheet rows could cause the old compacting save to duplicate records at the uncleared tail.
+- Header checks now read only row 1 and still reject unexpected columns. Saves retain physical row positions, update/append one row, and preserve concurrency checks, create idempotency, formula-safe values, and the 4,000-record guard.
+- Save responses include the server-computed follow-up bucket; the client updates that business directly without a second server request. Other-device changes are still refreshed when entering My CRM.
+- Startup counts use narrow blank-aware ranges: catalog IDs only, all four exclusion fields. Catalog count now appears before the first import. This avoids materializing full catalog facts just for a count.
+- Verification: 55 automated tests passed, including observed failing regressions before fixes. Independent review found no blockers in the final diff. Local browser checks passed for create, call logging, due-today count, editing to current customer, and immediate removal from active reminders. No paid provider searches.
+- Remaining larger optimization: history lookup still scans the activity table, and saves still read CRM to enforce uniqueness/versioning. Indexing these safely is a separate storage change; no speculative persistent cache was added.

@@ -24,15 +24,22 @@ function sheet_(name,skipHeaders){
  if(!spreadsheetBinding_||spreadsheetBinding_.id!==id)spreadsheetBinding_={id:id,value:SpreadsheetApp.openById(id)};
  var ss=spreadsheetBinding_.value,s=ss.getSheetByName(name);
  if(!s){s=ss.insertSheet(name);s.getRange(1,1,1,TABLES_[name].length).setValues([TABLES_[name]]);s.setFrozenRows(1);}
- if(skipHeaders!==true)validateHeaders_(name,s.getDataRange().getValues()[0]);
+ if(skipHeaders!==true)validateHeaders_(name,s.getRange(1,1,1,Math.max(TABLES_[name].length,s.getLastColumn())).getValues()[0]);
  return s;
 }
 function records_(name){
+ return recordEntries_(name).map(function(entry){return entry.record;});
+}
+function recordEntries_(name){
  var values=sheet_(name,true).getDataRange().getValues();
  validateHeaders_(name,values[0]);
- return values.slice(1).filter(function(r){return r.some(function(v){return v!=='';});}).map(function(r){var x={};TABLES_[name].forEach(function(h,i){x[h]=r[i]==null?'':String(r[i]);});return x;});
+ return values.slice(1).map(function(r,index){if(!r.some(function(v){return v!=='';}))return null;var x={};TABLES_[name].forEach(function(h,i){x[h]=r[i]==null?'':String(r[i]);});return {row:index+2,record:x};}).filter(Boolean);
 }
 function validateHeaders_(name,headers){if(JSON.stringify(headers)!==JSON.stringify(TABLES_[name]))throw new Error(name+' headers were changed. Restore the documented headers before continuing.');}
+function countRows_(name,width){
+ var sheet=sheet_(name),last=sheet.getLastRow();if(last<2)return 0;
+ return sheet.getRange(2,1,last-1,width).getValues().filter(function(row){return row.some(function(value){return value!=='';});}).length;
+}
 function writeRecords_(name,records){
  if(records.length>4000)throw new Error('Pilot capacity reached. Ask the builder to expand the storage design.');
  var s=sheet_(name);if(!records.length)return;
@@ -41,10 +48,10 @@ function writeRecords_(name,records){
  s.getRange(2,1,rows.length,TABLES_[name].length).setNumberFormat('@').setValues(rows);
 }
 function appendRecord_(name,record){
- var s=sheet_(name);if(s.getLastRow()>10000)throw new Error('Activity capacity reached.');
- ensureGrid_(s,s.getLastRow()+1,TABLES_[name].length);
- s.getRange(s.getLastRow()+1,1,1,TABLES_[name].length).setNumberFormat('@').setValues([TABLES_[name].map(function(h){return literalCell(record[h]);})]);
+ var s=sheet_(name),last=s.getLastRow();if(last>10000)throw new Error('Activity capacity reached.');
+ writeRecordAt_(s,name,last+1,record);
 }
+function writeRecordAt_(sheet,name,row,record){ensureGrid_(sheet,row,TABLES_[name].length);sheet.getRange(row,1,1,TABLES_[name].length).setNumberFormat('@').setValues([TABLES_[name].map(function(h){return literalCell(record[h]);})]);}
 function ensureGrid_(sheet,lastRow,lastColumn){
  var rows=sheet.getMaxRows(),columns=sheet.getMaxColumns();
  if(lastRow>rows)sheet.insertRowsAfter(rows,lastRow-rows);
@@ -87,7 +94,7 @@ function getBootstrap(){
 }
 function bootstrapSnapshot_(props){
  var active=props.getProperty('APIFY_SEARCH');active=active?JSON.parse(active):null;
- return {industries:preferences_(),statuses:CRM_STATUSES,activityTypes:ACTIVITY_TYPES,today:today_(),configured:!!configuredProperty_(props,'GOOGLE_MAPS_API_KEY')&&policiesConfigured_(props),apifyConfigured:!!configuredProperty_(props,'APIFY_TOKEN'),pendingApifyJob:active&&['running','advance'].indexOf(active.stage)>=0?active.id:'',privacyUrl:props.getProperty('PRIVACY_URL')||'',termsUrl:props.getProperty('TERMS_URL')||'',exclusionCount:records_('Exclusions').length,catalogCount:records_('Catalog').length,demo:false};
+ return {industries:preferences_(),statuses:CRM_STATUSES,activityTypes:ACTIVITY_TYPES,today:today_(),configured:!!configuredProperty_(props,'GOOGLE_MAPS_API_KEY')&&policiesConfigured_(props),apifyConfigured:!!configuredProperty_(props,'APIFY_TOKEN'),pendingApifyJob:active&&['running','advance'].indexOf(active.stage)>=0?active.id:'',privacyUrl:props.getProperty('PRIVACY_URL')||'',termsUrl:props.getProperty('TERMS_URL')||'',exclusionCount:countRows_('Exclusions',4),catalogCount:countRows_('Catalog',1),demo:false};
 }
 function policiesConfigured_(props){return /^https:\/\//.test(props.getProperty('PRIVACY_URL')||'')&&/^https:\/\//.test(props.getProperty('TERMS_URL')||'');}
 function saveIndustryPreferences(order){
@@ -141,16 +148,17 @@ function getLeadActivities(leadId){
 function saveLead(record){
  authorize_();var clean=validateLead(record);var token=textValue(record&&record.request_id,100);
  return locked_(function(){
-   var rows=records_('CRM'),index=rows.findIndex(function(x){return clean.id&&x.id===clean.id;});
+   var entries=recordEntries_('CRM'),rows=entries.map(function(x){return x.record;}),index=rows.findIndex(function(x){return clean.id&&x.id===clean.id;});
    if(clean.id&&index<0)throw new Error('CRM record no longer exists. Refresh before saving.');
-   if(!clean.id&&token){var repeated=rows.find(function(x){return x.request_id===token;});if(repeated)return repeated;}
+   if(!clean.id&&token){var repeated=rows.find(function(x){return x.request_id===token;});if(repeated)return Object.assign({},repeated,{due_bucket:followUpBucket(repeated,today_())});}
    if(clean.place_id&&rows.some(function(x){return x.place_id===clean.place_id&&x.id!==clean.id;}))throw new Error('This location already has a CRM record. Refresh My CRM and open the existing business.');
    var previous=index>=0?rows[index]:null;
    if(previous&&textValue(record.expected_updated_at,100)!==previous.updated_at)throw new Error('This business changed since you opened it. Close the editor, refresh My CRM, and reopen it before saving. Your draft is still in the editor.');
    var now=new Date().getTime(),previousTime=previous?Date.parse(previous.updated_at):NaN;
    var saved=Object.assign(clean,{id:previous?previous.id:Utilities.getUuid(),created_at:previous?previous.created_at:new Date(now).toISOString(),updated_at:new Date(Number.isFinite(previousTime)?Math.max(now,previousTime+1):now).toISOString(),request_id:previous?previous.request_id:token});
-   if(index>=0)rows[index]=saved;else rows.push(saved);
-   writeRecords_('CRM',rows);return saved;
+   if(rows.length+(index<0?1:0)>4000)throw new Error('Pilot capacity reached. Ask the builder to expand the storage design.');
+   var sheet=sheet_('CRM');writeRecordAt_(sheet,'CRM',index>=0?entries[index].row:sheet.getLastRow()+1,saved);
+   return Object.assign({},saved,{due_bucket:followUpBucket(saved,today_())});
  });
 }
 function logActivity(activity){
